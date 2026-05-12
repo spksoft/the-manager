@@ -3,10 +3,10 @@
 import { cn } from "@the-manager/ui";
 import { useState } from "react";
 import { useProject } from "../lib/hooks";
-import { ChatView } from "./ChatView";
 import { ErrorBanner } from "./ErrorBanner";
 import { FilesTab } from "./FilesTab";
 import { GitTab } from "./GitTab";
+import { TerminalView } from "./TerminalView";
 
 type Tab = "agent" | "files" | "git";
 const TABS: { id: Tab; label: string }[] = [
@@ -21,7 +21,7 @@ interface ProjectWorkspaceProps {
 
 export function ProjectWorkspace({ projectId }: ProjectWorkspaceProps) {
   const [activeTab, setActiveTab] = useState<Tab>("agent");
-  const { data: project, error } = useProject(projectId);
+  const { error } = useProject(projectId);
 
   if (error) {
     return <ErrorBanner message={`Failed to load project: ${String(error)}`} />;
@@ -56,16 +56,7 @@ export function ProjectWorkspace({ projectId }: ProjectWorkspaceProps) {
 
       {/* Tab content */}
       <div className="min-h-0 flex-1 overflow-hidden p-4">
-        {activeTab === "agent" && (
-          <ChatView
-            projectId={projectId}
-            emptyHint={
-              project
-                ? `Send a prompt to the Claude agent running in ${project.path}.`
-                : "Loading project…"
-            }
-          />
-        )}
+        {activeTab === "agent" && <TerminalView projectId={projectId} />}
         {activeTab === "files" && <FilesTab projectId={projectId} />}
         {activeTab === "git" && <GitTab projectId={projectId} />}
       </div>

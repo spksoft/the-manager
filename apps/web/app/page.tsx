@@ -89,7 +89,7 @@ export default function HomePage() {
           </div>
         </header>
 
-        <div className="min-h-0 flex-1 overflow-hidden px-8 py-6">
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-8 py-6">
           {activeView.type === "manager" && <ManagerSurface />}
           {activeView.type === "assets" && <AssetBrowser />}
           {activeView.type === "project" && <ProjectWorkspace projectId={activeView.id} />}

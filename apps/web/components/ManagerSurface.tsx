@@ -1,19 +1,14 @@
 "use client";
 
 import { MANAGER_PROJECT_ID } from "../lib/manager-id";
-import { ChatView } from "./ChatView";
+import { TerminalView } from "./TerminalView";
 
 /**
- * The Manager is just a chat against `claude -p` running in the dedicated
- * `~/.the-manager/manager/cwd` directory. Conversation continuity is handled
- * by ChatView reusing the same project id (`MANAGER_PROJECT_ID`) across page
- * loads — the server persists one conversation UUID per id.
+ * The Manager is an interactive `claude` REPL running in the dedicated
+ * `~/.the-manager/manager/cwd` directory. The pty stays alive across page
+ * loads — TerminalView attaches to the existing session and replays its
+ * recent output, so users see the conversation they left.
  */
 export function ManagerSurface() {
-  return (
-    <ChatView
-      projectId={MANAGER_PROJECT_ID}
-      emptyHint="Tell the Manager what to do — it can orchestrate agents across your projects."
-    />
-  );
+  return <TerminalView projectId={MANAGER_PROJECT_ID} />;
 }

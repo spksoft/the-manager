@@ -30,10 +30,12 @@ The mental model is "one app for all apps" — a single control plane where the 
 ### CLI Abstraction Layer
 All agent CLI interaction goes through driver interfaces in `packages/drivers`:
 
-- **`PromptDriver`** (the primary path) — one prompt → one CLI invocation → a stream of structured events. `ClaudePromptDriver` runs `claude -p --session-id <uuid> --output-format stream-json` per user message, threading conversation continuity through `--resume <uuid>` on subsequent calls. This is what the Manager and per-project agents use today.
-- **`AgentDriver` / `PtyAgentDriver`** (kept for future use) — long-lived pty session. Useful if we ever need to host an interactive TUI (vim inside the agent, codex/gemini if they don't get a print mode, etc.). The `claude` interactive REPL was tried first and abandoned: TUI redraws, trust prompts, and ANSI cursor math don't belong in our control plane.
+- **`AgentDriver` / `PtyAgentDriver`** (the primary path) — long-lived pty session. `ClaudeDriver` spawns `claude` (no `-p`) under a pty so the full interactive REPL renders in the UI. The client (xterm.js in the browser or Electron) attaches via SSE for output and POST for keystrokes; the pty is born sized to the client and resizes with it. One process per project (and one for the Manager) — conversation continuity comes from the process staying alive, not from `--session-id` / `--resume`. Per-message cold start is gone.
+- New CLI agents (Codex, Gemini, etc.) plug in by subclassing `PtyAgentDriver` with their binary name; the rest of the stack is identical.
 
 Never call `claude` (or any other CLI) directly from UI or business-logic code — always go through the driver layer.
+
+The web/Electron consumer of this is `apps/web/lib/sessions.ts`, which owns a `globalThis`-backed registry of live sessions keyed by `projectId`. Two route handlers expose it: `GET /api/projects/[id]/terminal/stream` (SSE of raw bytes, replays the recent recording on attach) and `POST /api/projects/[id]/terminal` (input or resize). `DELETE /api/projects/[id]/conversation` kills the pty so the next attach spawns a fresh claude.
 
 ### Layered Design (target shape)
 - **UI layer** (Next.js pages / React components) — rendering only, no process or fs side effects
