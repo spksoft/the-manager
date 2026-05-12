@@ -1,0 +1,25 @@
+{
+  "name": "@the-manager/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist/main/index.js",
+  "scripts": {
+    "dev": "pnpm build && electron .",
+    "build": "tsc -p tsconfig.main.json && tsc -p tsconfig.preload.json",
+    "start": "electron .",
+    "package": "pnpm build && electron-builder --dir",
+    "typecheck": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.preload.json --noEmit"
+  },
+  "dependencies": {
+    "@the-manager/persistence": "workspace:*",
+    "@the-manager/shared": "workspace:*",
+    "get-port-please": "^3.1.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "electron": "^42.0.0",
+    "electron-builder": "^26.8.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}

@@ -1,0 +1,7 @@
+packages:
+  - apps/*
+  - packages/*
+allowBuilds:
+  electron-winstaller: false
+  esbuild: false
+  sharp: false

@@ -1,0 +1,17 @@
+appId: dev.the-manager.app
+productName: The Manager
+directories:
+  output: release
+files:
+  - dist/**/*
+  - package.json
+extraResources:
+  # In Phase 2 we'll add the prebuilt apps/web here so startEmbeddedServer can find it.
+  # - from: "../web/.next"
+  #   to: "web/.next"
+mac:
+  category: public.app-category.developer-tools
+linux:
+  target: ["AppImage"]
+win:
+  target: ["nsis"]

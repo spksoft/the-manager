@@ -1,0 +1,27 @@
+{
+  "name": "the-manager",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "turbo run dev --parallel",
+    "dev:web": "turbo run dev --filter=@the-manager/web",
+    "dev:desktop": "turbo run dev --filter=@the-manager/desktop",
+    "build": "turbo run build",
+    "start": "turbo run start --filter=@the-manager/web",
+    "typecheck": "turbo run typecheck",
+    "lint": "biome check .",
+    "format": "biome format --write .",
+    "smoke": "node scripts/smoke-api.mjs",
+    "smoke:persistence": "tsx packages/persistence/scripts/smoke.mjs"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.15",
+    "turbo": "^2.9.0",
+    "typescript": "^5.7.0"
+  }
+}
