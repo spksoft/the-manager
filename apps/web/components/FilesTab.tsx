@@ -4,9 +4,22 @@ import type { SupportedLanguage } from "@the-manager/editor";
 import { MiniEditor } from "@the-manager/editor";
 import { Button } from "@the-manager/ui";
 import { useEffect, useRef, useState } from "react";
+import { useSWRConfig } from "swr";
 import type { FileEntry } from "../lib/hooks";
 import { useFiles } from "../lib/hooks";
 import { ErrorBanner } from "./ErrorBanner";
+
+// ---------------------------------------------------------------------------
+// Tree-mutation helpers
+// ---------------------------------------------------------------------------
+function dirOf(path: string): string {
+  const idx = path.lastIndexOf("/");
+  return idx === -1 ? "" : path.slice(0, idx);
+}
+
+function filesKey(projectId: string, dirPath: string): string {
+  return `/api/projects/${projectId}/files?path=${encodeURIComponent(dirPath)}`;
+}
 
 // ---------------------------------------------------------------------------
 // Language detection
@@ -28,9 +41,18 @@ interface FileTreeProps {
   dirPath: string;
   onSelect: (path: string) => void;
   selectedPath: string | null;
+  onMutated: (affectedDirs: string[]) => void;
+  onSelectionGone: (path: string) => void;
 }
 
-function FileTree({ projectId, dirPath, onSelect, selectedPath }: FileTreeProps) {
+function FileTree({
+  projectId,
+  dirPath,
+  onSelect,
+  selectedPath,
+  onMutated,
+  onSelectionGone,
+}: FileTreeProps) {
   const { data, error, isLoading } = useFiles(projectId, dirPath);
 
   if (isLoading) {
@@ -61,6 +83,8 @@ function FileTree({ projectId, dirPath, onSelect, selectedPath }: FileTreeProps)
           entry={entry}
           onSelect={onSelect}
           selectedPath={selectedPath}
+          onMutated={onMutated}
+          onSelectionGone={onSelectionGone}
         />
       ))}
     </ul>
@@ -72,30 +96,105 @@ interface FileTreeEntryProps {
   entry: FileEntry;
   onSelect: (path: string) => void;
   selectedPath: string | null;
+  onMutated: (affectedDirs: string[]) => void;
+  onSelectionGone: (path: string) => void;
 }
 
-function FileTreeEntry({ projectId, entry, onSelect, selectedPath }: FileTreeEntryProps) {
+function FileTreeEntry({
+  projectId,
+  entry,
+  onSelect,
+  selectedPath,
+  onMutated,
+  onSelectionGone,
+}: FileTreeEntryProps) {
   const [expanded, setExpanded] = useState(false);
   const isSelected = selectedPath === entry.path;
 
+  const rename = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const next = window.prompt(
+      `Rename ${entry.type === "dir" ? "directory" : "file"} (project-relative):`,
+      entry.path,
+    );
+    if (!next || next.trim() === "" || next === entry.path) return;
+    const res = await fetch(`/api/projects/${projectId}/files`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ from: entry.path, to: next.trim() }),
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { message?: string };
+      window.alert(body.message ?? `Rename failed: HTTP ${res.status}`);
+      return;
+    }
+    if (selectedPath === entry.path) onSelectionGone(entry.path);
+    onMutated([dirOf(entry.path), dirOf(next.trim())]);
+  };
+
+  const remove = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const recursive = entry.type === "dir";
+    const msg = recursive
+      ? `Delete folder "${entry.path}" and everything inside? This cannot be undone.`
+      : `Delete file "${entry.path}"?`;
+    if (!window.confirm(msg)) return;
+    const res = await fetch(`/api/projects/${projectId}/files`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: entry.path, recursive }),
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { message?: string };
+      window.alert(body.message ?? `Delete failed: HTTP ${res.status}`);
+      return;
+    }
+    if (selectedPath === entry.path) onSelectionGone(entry.path);
+    onMutated([dirOf(entry.path)]);
+  };
+
   if (entry.type === "dir") {
     return (
-      <li>
-        <button
-          type="button"
-          onClick={() => setExpanded((v) => !v)}
-          aria-expanded={expanded}
-          className="flex w-full items-center gap-1 rounded px-1.5 py-0.5 text-left text-xs text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200"
-        >
-          <span aria-hidden>{expanded ? "▾" : "▸"}</span>
-          <span className="font-medium">{entry.name}/</span>
-        </button>
+      <li className="group">
+        <div className="flex items-center gap-0.5">
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            aria-expanded={expanded}
+            className="flex flex-1 items-center gap-1 rounded px-1.5 py-0.5 text-left text-xs text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200"
+          >
+            <span aria-hidden>{expanded ? "▾" : "▸"}</span>
+            <span className="font-medium">{entry.name}/</span>
+          </button>
+          <span className="flex items-center opacity-0 transition-opacity group-hover:opacity-100">
+            <button
+              type="button"
+              onClick={rename}
+              aria-label={`Rename ${entry.path}`}
+              title="Rename"
+              className="rounded p-0.5 text-zinc-600 hover:text-zinc-200"
+            >
+              ✎
+            </button>
+            <button
+              type="button"
+              onClick={remove}
+              aria-label={`Delete ${entry.path}`}
+              title="Delete (recursive)"
+              className="rounded p-0.5 text-zinc-600 hover:text-red-400"
+            >
+              ✕
+            </button>
+          </span>
+        </div>
         {expanded && (
           <FileTree
             projectId={projectId}
             dirPath={entry.path}
             onSelect={onSelect}
             selectedPath={selectedPath}
+            onMutated={onMutated}
+            onSelectionGone={onSelectionGone}
           />
         )}
       </li>
@@ -103,21 +202,43 @@ function FileTreeEntry({ projectId, entry, onSelect, selectedPath }: FileTreeEnt
   }
 
   return (
-    <li>
-      <button
-        type="button"
-        onClick={() => onSelect(entry.path)}
-        className={`flex w-full items-center gap-1 rounded px-1.5 py-0.5 text-left text-xs transition-colors ${
-          isSelected
-            ? "bg-zinc-700/60 text-zinc-100"
-            : "text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200"
-        }`}
-      >
-        <span aria-hidden className="text-zinc-600">
-          —
+    <li className="group">
+      <div className="flex items-center gap-0.5">
+        <button
+          type="button"
+          onClick={() => onSelect(entry.path)}
+          className={`flex flex-1 items-center gap-1 rounded px-1.5 py-0.5 text-left text-xs transition-colors ${
+            isSelected
+              ? "bg-zinc-700/60 text-zinc-100"
+              : "text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200"
+          }`}
+        >
+          <span aria-hidden className="text-zinc-600">
+            —
+          </span>
+          {entry.name}
+        </button>
+        <span className="flex items-center opacity-0 transition-opacity group-hover:opacity-100">
+          <button
+            type="button"
+            onClick={rename}
+            aria-label={`Rename ${entry.path}`}
+            title="Rename"
+            className="rounded p-0.5 text-zinc-600 hover:text-zinc-200"
+          >
+            ✎
+          </button>
+          <button
+            type="button"
+            onClick={remove}
+            aria-label={`Delete ${entry.path}`}
+            title="Delete"
+            className="rounded p-0.5 text-zinc-600 hover:text-red-400"
+          >
+            ✕
+          </button>
         </span>
-        {entry.name}
-      </button>
+      </div>
     </li>
   );
 }
@@ -174,12 +295,57 @@ interface FilesTabProps {
 }
 
 export function FilesTab({ projectId }: FilesTabProps) {
+  const { mutate: swrMutate } = useSWRConfig();
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [editorValue, setEditorValue] = useState<string>("");
   const [savedMtime, setSavedMtime] = useState<string | undefined>(undefined);
   const [saving, setSaving] = useState(false);
   const [saveErr, setSaveErr] = useState<string | null>(null);
   const [showStaleDialog, setShowStaleDialog] = useState(false);
+  const [treeErr, setTreeErr] = useState<string | null>(null);
+
+  const mutateDirs = (dirs: string[]) => {
+    const unique = Array.from(new Set(dirs));
+    return Promise.all(unique.map((d) => swrMutate(filesKey(projectId, d))));
+  };
+
+  const newFile = async () => {
+    const path = window.prompt("New file (project-relative):", "");
+    if (!path) return;
+    const trimmed = path.trim();
+    if (!trimmed) return;
+    const res = await fetch(`/api/projects/${projectId}/files`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: trimmed, content: "" }),
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { message?: string };
+      setTreeErr(body.message ?? `HTTP ${res.status}`);
+      return;
+    }
+    await mutateDirs([dirOf(trimmed)]);
+    setSelectedPath(trimmed);
+    setSavedMtime(undefined);
+  };
+
+  const newFolder = async () => {
+    const path = window.prompt("New folder (project-relative):", "");
+    if (!path) return;
+    const trimmed = path.trim();
+    if (!trimmed) return;
+    const res = await fetch(`/api/projects/${projectId}/files`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: trimmed, kind: "dir" }),
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { message?: string };
+      setTreeErr(body.message ?? `HTTP ${res.status}`);
+      return;
+    }
+    await mutateDirs([dirOf(trimmed)]);
+  };
   // Tracks the editor's persisted-on-disk content so we can detect unsaved
   // edits and prompt before discarding them when the user clicks a new file.
   const [savedContent, setSavedContent] = useState<string>("");
@@ -298,14 +464,58 @@ export function FilesTab({ projectId }: FilesTabProps) {
     <div className="flex h-full gap-3">
       {/* File tree pane */}
       <div className="flex w-52 flex-shrink-0 flex-col overflow-y-auto rounded-lg border border-zinc-800 bg-zinc-900/30 py-2">
-        <span className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
-          Files
-        </span>
+        <div className="flex items-center justify-between px-3 pb-1">
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+            Files
+          </span>
+          <span className="flex items-center gap-0.5">
+            <button
+              type="button"
+              onClick={newFile}
+              aria-label="New file"
+              title="New file"
+              className="rounded p-0.5 text-zinc-500 hover:text-zinc-200"
+            >
+              ＋
+            </button>
+            <button
+              type="button"
+              onClick={newFolder}
+              aria-label="New folder"
+              title="New folder"
+              className="rounded p-0.5 text-zinc-500 hover:text-zinc-200"
+            >
+              📁
+            </button>
+          </span>
+        </div>
+        {treeErr && (
+          <div className="mx-2 mb-1 rounded border border-red-900/60 bg-red-950/30 px-2 py-1 text-[11px] text-red-300">
+            {treeErr}
+            <button
+              type="button"
+              onClick={() => setTreeErr(null)}
+              aria-label="Dismiss error"
+              className="ml-1 text-red-400/70 hover:text-red-200"
+            >
+              ✕
+            </button>
+          </div>
+        )}
         <FileTree
           projectId={projectId}
           dirPath=""
           onSelect={handleSelect}
           selectedPath={selectedPath}
+          onMutated={(dirs) => {
+            void mutateDirs(dirs);
+          }}
+          onSelectionGone={() => {
+            setSelectedPath(null);
+            setSavedMtime(undefined);
+            setEditorValue("");
+            setSavedContent("");
+          }}
         />
       </div>
 

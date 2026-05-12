@@ -29,6 +29,30 @@ export class ProjectRepo {
     return project;
   }
 
+  /**
+   * Partial update. Throws `NotFoundError` if no row matches. The API layer is
+   * responsible for whitelisting which fields a given route is allowed to
+   * change (today: name, defaultDriver, path).
+   */
+  async update(
+    id: ProjectId,
+    patch: Partial<Pick<ProjectRow, "name" | "defaultDriver" | "path">>,
+  ): Promise<ProjectRow> {
+    let result: ProjectRow | null = null;
+    await this.store.update((file) => {
+      const row = file.data.find((p) => p.id === id);
+      if (!row) return file;
+      const next: ProjectRow = { ...row, ...patch };
+      result = next;
+      return {
+        ...file,
+        data: file.data.map((p) => (p.id === id ? next : p)),
+      };
+    });
+    if (!result) throw new NotFoundError("Project", id);
+    return result;
+  }
+
   async remove(id: ProjectId): Promise<void> {
     await this.store.update((file) => ({
       ...file,

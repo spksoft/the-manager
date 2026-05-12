@@ -68,13 +68,17 @@ export const AssetSchema = z.object({
   sha256: z.string().length(64),
   scope: z.union([z.literal("global"), z.object({ projectId: z.string().uuid() })]),
   tags: z.array(z.string()),
+  /** Path-like folder grouping. `null` means the asset lives at the root. */
+  folder: z.string().nullable(),
   createdAt: z.string().datetime(),
 });
 export type AssetRow = z.infer<typeof AssetSchema>;
 
 export const AssetsIndexSchema = z.object({
-  version: z.literal(1),
+  version: z.literal(2),
   data: z.array(AssetSchema),
+  /** Folder names that exist independently of any asset (e.g. freshly created empty folders). */
+  folders: z.array(z.string()),
 });
 
 export const SettingsSchema = z.object({

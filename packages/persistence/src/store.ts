@@ -30,6 +30,14 @@ export class JsonStore<T> {
     private readonly filePath: string,
     private readonly schema: z.ZodType<T>,
     private readonly defaultValue: () => T,
+    /**
+     * Optional pre-parse migration. Runs against the raw `JSON.parse` output
+     * before `schema.parse`, so a stored older-version shape can be reshaped
+     * into the current one transparently. Kept separate from `schema` because
+     * `z.preprocess` would break the single-generic constraint that ties
+     * `JsonStore`'s input and output types together.
+     */
+    private readonly migrate?: (raw: unknown) => unknown,
   ) {}
 
   /** Read + parse. Returns the cached value on subsequent calls. */
@@ -57,7 +65,9 @@ export class JsonStore<T> {
       }
       throw err;
     }
-    return this.schema.parse(JSON.parse(raw));
+    const parsed: unknown = JSON.parse(raw);
+    const upgraded = this.migrate ? this.migrate(parsed) : parsed;
+    return this.schema.parse(upgraded);
   }
 
   /**

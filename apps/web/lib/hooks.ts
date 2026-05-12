@@ -100,6 +100,10 @@ export function useAssets() {
   return useSWR<AssetRow[]>("/api/assets", fetcher);
 }
 
+export function useAssetFolders() {
+  return useSWR<{ folders: string[] }>("/api/assets/folders", fetcher);
+}
+
 // ---------------------------------------------------------------------------
 // Settings
 // ---------------------------------------------------------------------------

@@ -12,6 +12,7 @@ interface SidebarProps {
   onSelectProject: (id: string) => void;
   onSelectAssets: () => void;
   onAddProject: () => void;
+  onEditProject: (project: ProjectRow) => void;
   onRemoveProject: (id: string, name: string) => void;
   onOpenSettings: () => void;
 }
@@ -23,6 +24,7 @@ export function Sidebar({
   onSelectProject,
   onSelectAssets,
   onAddProject,
+  onEditProject,
   onRemoveProject,
   onOpenSettings,
 }: SidebarProps) {
@@ -79,18 +81,32 @@ export function Sidebar({
               active={activeView.type === "project" && activeView.id === p.id}
               onClick={() => onSelectProject(p.id)}
               hoverAction={
-                <button
-                  type="button"
-                  aria-label={`Remove project ${p.name}`}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onRemoveProject(p.id, p.name);
-                  }}
-                  className="rounded p-0.5 text-zinc-600 hover:text-red-300"
-                  title="Remove project"
-                >
-                  ✕
-                </button>
+                <span className="flex items-center gap-0.5">
+                  <button
+                    type="button"
+                    aria-label={`Edit project ${p.name}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onEditProject(p);
+                    }}
+                    className="rounded p-0.5 text-zinc-600 hover:text-zinc-200"
+                    title="Edit project"
+                  >
+                    ✎
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`Remove project ${p.name}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onRemoveProject(p.id, p.name);
+                    }}
+                    className="rounded p-0.5 text-zinc-600 hover:text-red-300"
+                    title="Remove project"
+                  >
+                    ✕
+                  </button>
+                </span>
               }
             />
           ))}

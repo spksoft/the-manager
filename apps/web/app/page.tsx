@@ -1,8 +1,10 @@
 "use client";
 
+import type { ProjectRow } from "@the-manager/persistence";
 import { useEffect, useMemo, useState } from "react";
 import { AssetBrowser } from "../components/AssetBrowser";
 import { CommandPalette } from "../components/CommandPalette";
+import { EditProjectDialog } from "../components/EditProjectDialog";
 import { ManagerSurface } from "../components/ManagerSurface";
 import { NewProjectDialog } from "../components/NewProjectDialog";
 import { ProjectWorkspace } from "../components/ProjectWorkspace";
@@ -14,6 +16,7 @@ export default function HomePage() {
   const [activeView, setActiveView] = useState<ActiveView>({ type: "manager" });
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [newProjectOpen, setNewProjectOpen] = useState(false);
+  const [editingProject, setEditingProject] = useState<ProjectRow | null>(null);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
 
   const { data: projects = [], mutate: mutateProjects } = useProjects();
@@ -59,6 +62,7 @@ export default function HomePage() {
         onSelectProject={(id) => setActiveView({ type: "project", id })}
         onSelectAssets={() => setActiveView({ type: "assets" })}
         onAddProject={() => setNewProjectOpen(true)}
+        onEditProject={(project) => setEditingProject(project)}
         onRemoveProject={async (id, name) => {
           if (
             !window.confirm(
@@ -104,6 +108,15 @@ export default function HomePage() {
           void mutateProjects([...(projects ?? []), project]);
           setActiveView({ type: "project", id: project.id });
           setNewProjectOpen(false);
+        }}
+      />
+      <EditProjectDialog
+        open={editingProject !== null}
+        project={editingProject}
+        onClose={() => setEditingProject(null)}
+        onUpdated={(updated) => {
+          void mutateProjects((projects ?? []).map((p) => (p.id === updated.id ? updated : p)));
+          setEditingProject(null);
         }}
       />
       <CommandPalette open={commandPaletteOpen} onClose={() => setCommandPaletteOpen(false)} />

@@ -1,10 +1,10 @@
 import "server-only";
-import { readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { ProjectId } from "@the-manager/shared";
 import { ValidationError } from "@the-manager/shared";
 import { z } from "zod";
-import { handleErr, jsonOk, parseJson } from "../../../../../lib/api";
+import { handleErr, jsonErr, jsonOk, parseJson } from "../../../../../lib/api";
 import { repos } from "../../../../../lib/runtime";
 
 export const dynamic = "force-dynamic";
@@ -100,6 +100,80 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
     await writeFile(abs, body.content, "utf8");
     const s = await stat(abs);
     return jsonOk({ ok: true, sizeBytes: s.size, mtime: s.mtime.toISOString() });
+  } catch (err) {
+    return handleErr(err);
+  }
+}
+
+const PostBody = z.object({
+  path: z.string().min(1),
+  kind: z.literal("dir"),
+});
+
+/** Create a new empty directory. File creation continues to use `PUT` with empty content. */
+export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
+  try {
+    const { id } = await ctx.params;
+    const body = await parseJson(req, PostBody);
+    const project = await repos.projects.get(id as ProjectId);
+    const abs = safeResolve(project.path, body.path);
+    try {
+      await mkdir(abs, { recursive: false });
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === "EEXIST")
+        return jsonErr(409, "EXISTS", `directory already exists: ${body.path}`);
+      throw err;
+    }
+    return jsonOk({ ok: true, path: body.path });
+  } catch (err) {
+    return handleErr(err);
+  }
+}
+
+const DeleteBody = z.object({
+  path: z.string().min(1),
+  recursive: z.boolean().optional(),
+});
+
+export async function DELETE(req: Request, ctx: { params: Promise<{ id: string }> }) {
+  try {
+    const { id } = await ctx.params;
+    const body = await parseJson(req, DeleteBody);
+    const project = await repos.projects.get(id as ProjectId);
+    const abs = safeResolve(project.path, body.path);
+    const s = await stat(abs);
+    if (s.isDirectory() && !body.recursive) {
+      throw new ValidationError(`refusing to delete a directory without recursive: true`);
+    }
+    await rm(abs, { recursive: Boolean(body.recursive), force: false });
+    return jsonOk({ ok: true, path: body.path });
+  } catch (err) {
+    return handleErr(err);
+  }
+}
+
+const PatchBody = z.object({
+  from: z.string().min(1),
+  to: z.string().min(1),
+});
+
+/** Rename or move a file/directory inside the project root. Both paths flow through safeResolve. */
+export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }> }) {
+  try {
+    const { id } = await ctx.params;
+    const body = await parseJson(req, PatchBody);
+    const project = await repos.projects.get(id as ProjectId);
+    const absFrom = safeResolve(project.path, body.from);
+    const absTo = safeResolve(project.path, body.to);
+    try {
+      await stat(absTo);
+      return jsonErr(409, "EXISTS", `destination already exists: ${body.to}`);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    }
+    await rename(absFrom, absTo);
+    return jsonOk({ ok: true, from: body.from, to: body.to });
   } catch (err) {
     return handleErr(err);
   }

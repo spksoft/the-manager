@@ -31,6 +31,7 @@ export async function POST(req: Request) {
     }
     const scopeRaw = form.get("scope");
     const tagsRaw = form.get("tags");
+    const folderRaw = form.get("folder");
     let scope: { projectId: string } | "global" = "global";
     if (typeof scopeRaw === "string" && scopeRaw && scopeRaw !== "global") {
       scope = { projectId: scopeRaw };
@@ -42,6 +43,7 @@ export async function POST(req: Request) {
             .map((t) => t.trim())
             .filter(Boolean)
         : [];
+    const folder = typeof folderRaw === "string" && folderRaw.length > 0 ? folderRaw : null;
 
     const bytes = new Uint8Array(await file.arrayBuffer());
     const sha256 = await repos.assets.addBlob(bytes);
@@ -54,6 +56,7 @@ export async function POST(req: Request) {
       sha256,
       scope,
       tags,
+      folder,
       createdAt: new Date().toISOString(),
     });
     return jsonOk(asset, { status: 201 });
