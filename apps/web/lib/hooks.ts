@@ -75,6 +75,17 @@ export function useGit(id: string | null) {
   });
 }
 
+export interface GitFileDiff {
+  path: string;
+  staged: string;
+  unstaged: string;
+}
+
+export function useGitFileDiff(id: string | null, path: string | null) {
+  const key = id && path ? `/api/projects/${id}/git?diff=${encodeURIComponent(path)}` : null;
+  return useSWR<GitFileDiff>(key, fetcher);
+}
+
 // ---------------------------------------------------------------------------
 // Files
 // ---------------------------------------------------------------------------
@@ -102,6 +113,20 @@ export function useAssets() {
 
 export function useAssetFolders() {
   return useSWR<{ folders: string[] }>("/api/assets/folders", fetcher);
+}
+
+// ---------------------------------------------------------------------------
+// Session liveness
+// ---------------------------------------------------------------------------
+export interface SessionStatus {
+  alive: boolean;
+  lastActivityAt: string | null;
+}
+
+export function useSessionStatuses() {
+  return useSWR<{ statuses: Record<string, SessionStatus> }>("/api/sessions/status", fetcher, {
+    refreshInterval: 2000,
+  });
 }
 
 // ---------------------------------------------------------------------------

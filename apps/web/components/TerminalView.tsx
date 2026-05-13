@@ -3,6 +3,7 @@
 import { Button } from "@the-manager/ui";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ErrorBanner } from "./ErrorBanner";
+import { MicButton } from "./MicButton";
 
 /**
  * xterm.js touches `self` at module-eval time, which crashes Next's SSR pass.
@@ -181,16 +182,31 @@ export function TerminalView({ projectId }: TerminalViewProps) {
     }
   }, [projectId]);
 
+  // STT → terminal: recognised text is auto-submitted (carriage return appended).
+  const handleVoiceInput = useCallback(
+    (text: string) => {
+      void fetch(`/api/projects/${projectId}/terminal`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "input", data: `${text}\r` }),
+      }).catch((e: unknown) => {
+        setError(e instanceof Error ? e.message : String(e));
+      });
+    },
+    [projectId],
+  );
+
   return (
-    <section className="flex h-full min-h-0 flex-col gap-2">
+    <section className="animate-fade-in flex h-full min-h-0 flex-col gap-2">
       {error && <ErrorBanner message={error} onDismiss={() => setError(null)} />}
       <div
         ref={containerRef}
         role="application"
         aria-label="Interactive Claude terminal"
-        className="min-h-0 flex-1 overflow-hidden rounded-lg border border-zinc-800 bg-[#0a0a0a] p-2"
+        className="min-h-0 flex-1 overflow-hidden rounded-lg border border-zinc-800 bg-[#0a0a0a] p-2 transition-colors"
       />
-      <div className="flex flex-shrink-0 items-center justify-end">
+      <div className="flex flex-shrink-0 items-center justify-end gap-2">
+        <MicButton onResult={handleVoiceInput} />
         <Button
           type="button"
           variant="ghost"

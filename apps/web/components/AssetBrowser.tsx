@@ -3,15 +3,16 @@
 import type { AssetRow } from "@the-manager/persistence";
 import { useMemo, useRef, useState } from "react";
 import { useAssetFolders, useAssets, useProjects } from "../lib/hooks";
-import { AssetEditorDialog } from "./AssetEditorDialog";
+import { AssetEditorPane } from "./AssetEditorPane";
 import { ErrorBanner } from "./ErrorBanner";
 
 /**
- * Asset browser with folder grouping. Folders are a flat namespace of
- * path-like strings (managed via `/api/assets/folders`). Selecting a folder
- * filters the visible asset list and pre-selects it as the upload target.
+ * Asset browser laid out like FilesTab: left rail = folders + asset list,
+ * right pane = inline editor for the selected asset (or a draft new file).
+ * Upload still works via the file picker / drag-drop at the top of the left
+ * rail; everything else happens in-pane — no modal dialogs.
  */
-const ROOT = "__root__";
+type Selection = { kind: "asset"; id: string } | { kind: "new" } | null;
 
 export function AssetBrowser() {
   const { data: assets, error, mutate: mutateAssets } = useAssets();
@@ -25,9 +26,7 @@ export function AssetBrowser() {
   const [mutationErr, setMutationErr] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [currentFolder, setCurrentFolder] = useState<string | null>(null);
-  // Unified create+edit state: dialogOpen + editorAsset (null = create mode).
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [editorAsset, setEditorAsset] = useState<AssetRow | null>(null);
+  const [selection, setSelection] = useState<Selection>(null);
   const [replaceTarget, setReplaceTarget] = useState<AssetRow | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
@@ -36,6 +35,10 @@ export function AssetBrowser() {
     () => (assets ?? []).filter((a) => (a.folder ?? null) === currentFolder),
     [assets, currentFolder],
   );
+  const selectedAsset =
+    selection?.kind === "asset"
+      ? ((assets ?? []).find((a) => a.id === selection.id) ?? null)
+      : null;
 
   const upload = async (file: File) => {
     setUploading(true);
@@ -72,6 +75,7 @@ export function AssetBrowser() {
         throw new Error(body.message ?? `HTTP ${res.status}`);
       }
       await mutateAssets();
+      if (selection?.kind === "asset" && selection.id === id) setSelection(null);
     } catch (e) {
       setMutationErr(e instanceof Error ? e.message : String(e));
     }
@@ -118,8 +122,6 @@ export function AssetBrowser() {
     }
   };
 
-  // Replace blob: stash the asset, kick the hidden file input, and read the
-  // file in the onChange. Keeping a single input simplifies lifecycle.
   const beginReplaceBlob = (asset: AssetRow) => {
     setReplaceTarget(asset);
     replaceInputRef.current?.click();
@@ -144,7 +146,6 @@ export function AssetBrowser() {
       setMutationErr(e instanceof Error ? e.message : String(e));
     } finally {
       setUploading(false);
-      // Reset the input so picking the same file again re-fires onChange.
       if (replaceInputRef.current) replaceInputRef.current.value = "";
     }
   };
@@ -167,64 +168,69 @@ export function AssetBrowser() {
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto">
-      {uploadErr && <ErrorBanner message={uploadErr} onDismiss={() => setUploadErr(null)} />}
-      {mutationErr && <ErrorBanner message={mutationErr} onDismiss={() => setMutationErr(null)} />}
-      {error && <ErrorBanner message={`Failed to load assets: ${String(error)}`} />}
+    <div className="flex h-full min-h-0 gap-3">
+      {/* Left rail */}
+      <div className="flex w-72 flex-shrink-0 flex-col gap-3 overflow-y-auto rounded-lg border border-zinc-800 bg-zinc-900/30 p-3">
+        {uploadErr && <ErrorBanner message={uploadErr} onDismiss={() => setUploadErr(null)} />}
+        {mutationErr && (
+          <ErrorBanner message={mutationErr} onDismiss={() => setMutationErr(null)} />
+        )}
+        {error && <ErrorBanner message={`Failed to load assets: ${String(error)}`} />}
 
-      {/* Upload zone */}
-      <section
-        aria-label="File upload area"
-        onDragOver={(e) => {
-          e.preventDefault();
-          setDragOver(true);
-        }}
-        onDragLeave={() => setDragOver(false)}
-        onDrop={(e) => {
-          e.preventDefault();
-          setDragOver(false);
-          handleFiles(e.dataTransfer.files);
-        }}
-        className={`flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed py-8 transition-colors ${
-          dragOver ? "border-emerald-500 bg-emerald-500/10" : "border-zinc-800 bg-zinc-900/20"
-        }`}
-      >
-        <span className="text-3xl text-zinc-600" aria-hidden>
-          ↑
-        </span>
-        <p className="text-sm text-zinc-400">
-          Drop files here or{" "}
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            className="text-emerald-400 underline hover:text-emerald-300"
-          >
-            click to upload
-          </button>
-        </p>
-        <input
-          ref={fileInputRef}
-          type="file"
-          multiple
-          className="hidden"
-          onChange={(e) => handleFiles(e.target.files)}
-          aria-label="Upload file"
-        />
-        <input
-          ref={replaceInputRef}
-          type="file"
-          className="hidden"
-          onChange={(e) => onReplaceFileSelected(e.target.files)}
-          aria-label="Replace asset content"
-        />
-        <div className="flex items-center gap-3 text-xs text-zinc-500">
-          <label htmlFor="upload-scope" className="flex items-center gap-1">
-            Scope:
+        {/* Upload + new-file row */}
+        <section
+          aria-label="File upload area"
+          onDragOver={(e) => {
+            e.preventDefault();
+            setDragOver(true);
+          }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={(e) => {
+            e.preventDefault();
+            setDragOver(false);
+            handleFiles(e.dataTransfer.files);
+          }}
+          className={`flex flex-col gap-2 rounded-md border border-dashed px-3 py-3 text-xs transition-colors ${
+            dragOver ? "border-emerald-500 bg-emerald-500/10" : "border-zinc-800 bg-zinc-950/40"
+          }`}
+        >
+          <div className="flex items-center justify-between gap-2">
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="text-emerald-400 underline-offset-2 hover:underline"
+            >
+              Upload…
+            </button>
+            <button
+              type="button"
+              onClick={() => setSelection({ kind: "new" })}
+              className="rounded border border-zinc-700 px-2 py-0.5 text-zinc-300 transition-colors hover:bg-zinc-800"
+            >
+              + New file
+            </button>
+          </div>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            className="hidden"
+            onChange={(e) => handleFiles(e.target.files)}
+            aria-label="Upload file"
+          />
+          <input
+            ref={replaceInputRef}
+            type="file"
+            className="hidden"
+            onChange={(e) => onReplaceFileSelected(e.target.files)}
+            aria-label="Replace asset content"
+          />
+          <label className="flex items-center gap-1 text-[11px] text-zinc-500">
+            <span>Scope</span>
             <select
-              id="upload-scope"
               value={uploadScope}
               onChange={(e) => setUploadScope(e.target.value)}
-              className="rounded border border-zinc-800 bg-zinc-900 px-2 py-0.5 text-zinc-300"
+              className="flex-1 rounded border border-zinc-800 bg-zinc-900 px-2 py-0.5 text-zinc-300"
             >
               <option value="global">Global</option>
               {projects?.map((p) => (
@@ -234,212 +240,190 @@ export function AssetBrowser() {
               ))}
             </select>
           </label>
-          <span className="text-zinc-700">·</span>
-          <span>
-            Folder: <span className="font-mono text-zinc-300">{currentFolder ?? "root"}</span>
-          </span>
-        </div>
-        {uploading && <p className="text-xs text-zinc-500">Uploading…</p>}
-      </section>
+          {uploading && <p className="text-[11px] text-zinc-500">Uploading…</p>}
+        </section>
 
-      {/* Folder bar */}
-      <section aria-label="Folders" className="flex flex-wrap items-center gap-1.5">
-        <FolderChip
-          label="Root"
-          active={currentFolder === null}
-          onSelect={() => setCurrentFolder(null)}
-          id={ROOT}
-        />
-        {folders.map((f) => (
-          <FolderChip
-            key={f}
-            label={f}
-            active={currentFolder === f}
-            onSelect={() => setCurrentFolder(f)}
-            onRemove={() => removeFolder(f)}
-            id={f}
-          />
-        ))}
-        <button
-          type="button"
-          onClick={addFolder}
-          className="rounded-full border border-dashed border-zinc-700 px-2.5 py-1 text-xs text-zinc-400 hover:border-zinc-500 hover:text-zinc-200"
-        >
-          + New folder
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            setEditorAsset(null);
-            setDialogOpen(true);
-          }}
-          className="rounded-full border border-dashed border-emerald-700/50 px-2.5 py-1 text-xs text-emerald-300 hover:border-emerald-500 hover:text-emerald-200"
-        >
-          + New file
-        </button>
-      </section>
-
-      {/* Assets list */}
-      {!assets && !error && (
-        <div className="flex flex-col gap-2">
-          {[...Array(3)].map((_, i) => (
-            // biome-ignore lint/suspicious/noArrayIndexKey: skeleton
-            <div key={i} className="h-10 animate-pulse rounded-lg bg-zinc-800" />
-          ))}
-        </div>
-      )}
-
-      {assets && visibleAssets.length === 0 && (
-        <div className="flex items-center justify-center py-12 text-sm text-zinc-500">
-          {currentFolder === null
-            ? "No assets at the root — upload one above"
-            : `No assets in "${currentFolder}" yet`}
-        </div>
-      )}
-
-      {visibleAssets.length > 0 && (
-        <div className="overflow-hidden rounded-lg border border-zinc-800">
-          {visibleAssets.map((asset) => (
-            <div
-              key={asset.id}
-              className="flex items-center gap-3 border-b border-zinc-900 px-4 py-3 last:border-0"
+        {/* Folder list */}
+        <section className="flex flex-col gap-1">
+          <div className="flex items-center justify-between px-1">
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+              Folders
+            </span>
+            <button
+              type="button"
+              onClick={addFolder}
+              aria-label="New folder"
+              className="text-zinc-500 hover:text-zinc-200"
+              title="New folder"
             >
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <span className="truncate text-sm font-medium text-zinc-100">
-                    {asset.filename}
-                  </span>
-                  <span className="flex-shrink-0 rounded bg-zinc-800/80 px-1.5 py-0.5 text-[10px] text-zinc-400">
-                    {scopeLabel(asset)}
-                  </span>
-                  {asset.folder && (
-                    <span className="flex-shrink-0 rounded bg-zinc-800/40 px-1.5 py-0.5 text-[10px] text-zinc-500">
-                      {asset.folder}
-                    </span>
-                  )}
-                </div>
-                <div className="mt-0.5 flex items-center gap-2 text-[11px] text-zinc-500">
-                  <span>{asset.mime}</span>
-                  <span>·</span>
-                  <span>{formatBytes(asset.sizeBytes)}</span>
-                  <span>·</span>
-                  <span>{shortDate(asset.createdAt)}</span>
-                  {asset.tags.length > 0 && (
-                    <>
-                      <span>·</span>
-                      <span>{asset.tags.join(", ")}</span>
-                    </>
-                  )}
-                </div>
-              </div>
-              <div className="flex flex-shrink-0 items-center gap-1">
-                <a
-                  href={`/api/assets/${asset.id}/blob`}
-                  download={asset.filename}
-                  aria-label={`Download ${asset.filename}`}
-                  className="rounded p-1.5 text-zinc-500 hover:text-zinc-200"
-                  title="Download"
-                >
-                  ↓
-                </a>
-                <button
-                  type="button"
-                  aria-label={`Copy URL for ${asset.filename}`}
-                  onClick={() => copyPath(asset.id)}
-                  className="rounded p-1.5 text-zinc-500 hover:text-zinc-200"
-                  title="Copy URL"
-                >
-                  {copiedId === asset.id ? "✓" : "⎘"}
-                </button>
-                <button
-                  type="button"
-                  aria-label={`Edit ${asset.filename}`}
-                  onClick={() => {
-                    setEditorAsset(asset);
-                    setDialogOpen(true);
-                  }}
-                  className="rounded p-1.5 text-zinc-500 hover:text-zinc-200"
-                  title="Edit"
-                >
-                  ✎
-                </button>
-                <button
-                  type="button"
-                  aria-label={`Replace contents of ${asset.filename}`}
-                  onClick={() => beginReplaceBlob(asset)}
-                  className="rounded p-1.5 text-zinc-500 hover:text-zinc-200"
-                  title="Replace contents"
-                >
-                  ↻
-                </button>
-                <button
-                  type="button"
-                  aria-label={`Delete ${asset.filename}`}
-                  onClick={() => deleteAsset(asset.id)}
-                  className="rounded p-1.5 text-red-500/60 hover:text-red-400"
-                  title="Delete"
-                >
-                  ✕
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+              +
+            </button>
+          </div>
+          <ul className="flex flex-col gap-0.5">
+            <FolderRow
+              label="Root"
+              active={currentFolder === null}
+              onSelect={() => setCurrentFolder(null)}
+            />
+            {folders.map((f) => (
+              <FolderRow
+                key={f}
+                label={f}
+                active={currentFolder === f}
+                onSelect={() => setCurrentFolder(f)}
+                onRemove={() => removeFolder(f)}
+              />
+            ))}
+          </ul>
+        </section>
 
-      <AssetEditorDialog
-        open={dialogOpen}
-        asset={editorAsset}
-        initialFolder={currentFolder}
-        initialScope={uploadScope}
-        projects={projects ?? []}
-        folders={folders}
-        onClose={() => {
-          setDialogOpen(false);
-          setEditorAsset(null);
-        }}
-        onSaved={async () => {
-          await Promise.all([mutateAssets(), mutateFolders()]);
-          setDialogOpen(false);
-          setEditorAsset(null);
-        }}
-      />
+        {/* Asset list in current folder */}
+        <section className="flex min-h-0 flex-1 flex-col gap-1">
+          <span className="px-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+            {currentFolder === null ? "Root" : currentFolder} ({visibleAssets.length})
+          </span>
+          {!assets && !error && (
+            <div className="flex flex-col gap-2 px-1">
+              {[...Array(3)].map((_, i) => (
+                // biome-ignore lint/suspicious/noArrayIndexKey: skeleton
+                <div key={i} className="h-7 animate-pulse rounded bg-zinc-800" />
+              ))}
+            </div>
+          )}
+          {assets && visibleAssets.length === 0 && (
+            <p className="px-1 text-[11px] text-zinc-600">No assets in this folder yet.</p>
+          )}
+          <ul className="flex flex-col gap-0.5">
+            {visibleAssets.map((asset) => {
+              const isSel = selection?.kind === "asset" && selection.id === asset.id;
+              return (
+                <li key={asset.id} className="group">
+                  <div
+                    className={`flex items-center gap-1.5 rounded px-1.5 py-1 transition-colors ${
+                      isSel ? "bg-zinc-800/80" : "hover:bg-zinc-800/40"
+                    }`}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setSelection({ kind: "asset", id: asset.id })}
+                      className="min-w-0 flex-1 text-left"
+                      aria-pressed={isSel}
+                    >
+                      <div className="truncate text-xs text-zinc-200">{asset.filename}</div>
+                      <div className="truncate text-[10px] text-zinc-500">
+                        {scopeLabel(asset)} · {formatBytes(asset.sizeBytes)}
+                      </div>
+                    </button>
+                    <span className="flex flex-shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+                      <a
+                        href={`/api/assets/${asset.id}/blob`}
+                        download={asset.filename}
+                        aria-label={`Download ${asset.filename}`}
+                        title="Download"
+                        className="rounded p-0.5 text-zinc-500 hover:text-zinc-200"
+                      >
+                        ↓
+                      </a>
+                      <button
+                        type="button"
+                        aria-label={`Copy URL for ${asset.filename}`}
+                        onClick={() => copyPath(asset.id)}
+                        className="rounded p-0.5 text-zinc-500 hover:text-zinc-200"
+                        title="Copy URL"
+                      >
+                        {copiedId === asset.id ? "✓" : "⎘"}
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={`Replace contents of ${asset.filename}`}
+                        onClick={() => beginReplaceBlob(asset)}
+                        className="rounded p-0.5 text-zinc-500 hover:text-zinc-200"
+                        title="Replace contents"
+                      >
+                        ↻
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={`Delete ${asset.filename}`}
+                        onClick={() => deleteAsset(asset.id)}
+                        className="rounded p-0.5 text-red-500/60 hover:text-red-400"
+                        title="Delete"
+                      >
+                        ✕
+                      </button>
+                    </span>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      </div>
+
+      {/* Right pane: inline editor or empty state */}
+      <div className="flex min-w-0 flex-1 flex-col">
+        {selection === null ? (
+          <div className="flex flex-1 items-center justify-center rounded-lg border border-dashed border-zinc-800 text-sm text-zinc-600">
+            Select an asset to view or edit, or click "+ New file".
+          </div>
+        ) : (
+          <AssetEditorPane
+            asset={selectedAsset}
+            initialFolder={currentFolder}
+            initialScope={uploadScope}
+            projects={projects ?? []}
+            folders={folders}
+            onSaved={async (saved) => {
+              await Promise.all([mutateAssets(), mutateFolders()]);
+              setSelection({ kind: "asset", id: saved.id });
+            }}
+            onClose={() => setSelection(null)}
+          />
+        )}
+      </div>
     </div>
   );
 }
 
-interface FolderChipProps {
-  id: string;
+interface FolderRowProps {
   label: string;
   active: boolean;
   onSelect: () => void;
   onRemove?: () => void;
 }
 
-function FolderChip({ id, label, active, onSelect, onRemove }: FolderChipProps) {
+function FolderRow({ label, active, onSelect, onRemove }: FolderRowProps) {
   return (
-    <span
-      className={`group inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs transition-colors ${
-        active
-          ? "border-emerald-500/50 bg-emerald-500/10 text-zinc-50"
-          : "border-zinc-800 bg-zinc-900/40 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200"
-      }`}
-    >
-      <button type="button" onClick={onSelect} className="font-mono" aria-pressed={active}>
-        {label}
-      </button>
-      {onRemove && (
+    <li className="group">
+      <div
+        className={`flex items-center gap-1 rounded px-1.5 py-1 transition-colors ${
+          active ? "bg-zinc-800/80 text-zinc-50" : "text-zinc-400 hover:bg-zinc-800/40"
+        }`}
+      >
         <button
           type="button"
-          onClick={onRemove}
-          aria-label={`Remove folder ${id}`}
-          className="text-zinc-600 opacity-0 transition-opacity hover:text-red-400 group-hover:opacity-100"
-          title="Remove folder (only if empty)"
+          onClick={onSelect}
+          className="flex-1 truncate text-left text-xs"
+          aria-pressed={active}
         >
-          ✕
+          <span aria-hidden className="mr-1 text-zinc-600">
+            ▣
+          </span>
+          {label}
         </button>
-      )}
-    </span>
+        {onRemove && (
+          <button
+            type="button"
+            onClick={onRemove}
+            aria-label={`Remove folder ${label}`}
+            className="rounded p-0.5 text-zinc-600 opacity-0 transition-opacity hover:text-red-400 group-hover:opacity-100"
+            title="Remove (only if empty)"
+          >
+            ✕
+          </button>
+        )}
+      </div>
+    </li>
   );
 }
 
@@ -447,12 +431,4 @@ function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
   return `${(n / 1024 / 1024).toFixed(1)} MB`;
-}
-
-function shortDate(iso: string): string {
-  try {
-    return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
-  } catch {
-    return iso.slice(0, 10);
-  }
 }

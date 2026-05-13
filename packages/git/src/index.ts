@@ -39,6 +39,20 @@ export class GitView {
     return ref ? this.git.diff([ref]) : this.git.diff();
   }
 
+  /**
+   * Return both staged and unstaged unified-diff text for a single path.
+   * Untracked files have no staged or unstaged diff against HEAD — simple-git
+   * surfaces them via `status().not_added`, not via `diff`. We don't synthesise
+   * a fake diff for those; the UI shows "(new file — no diff)" instead.
+   */
+  async fileDiff(path: string): Promise<{ staged: string; unstaged: string }> {
+    const [unstaged, staged] = await Promise.all([
+      this.git.diff(["--", path]).catch(() => ""),
+      this.git.diff(["--cached", "--", path]).catch(() => ""),
+    ]);
+    return { staged, unstaged };
+  }
+
   async currentBranch(): Promise<string | null> {
     try {
       const branch = await this.git.revparse(["--abbrev-ref", "HEAD"]);

@@ -1,5 +1,6 @@
 import "server-only";
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import type { AgentHandle } from "@the-manager/drivers";
 import { ClaudeDriver } from "@the-manager/drivers";
 import { paths } from "@the-manager/persistence";
@@ -32,6 +33,13 @@ export interface Session {
   rows: number;
   /** True once the pty exited; no further data will be emitted. */
   exited: boolean;
+  /** ISO timestamp of the most recent stdout chunk, or session start if none yet. */
+  lastActivityAt: string;
+}
+
+export interface SessionStatus {
+  alive: boolean;
+  lastActivityAt: string | null;
 }
 
 /** Cap the in-memory recording so a very chatty session doesn't grow forever. */
@@ -51,10 +59,59 @@ async function resolveCwd(projectId: ProjectId): Promise<string> {
   if (projectId === MANAGER_PROJECT_ID) {
     const cwd = paths.managerCwd();
     await mkdir(cwd, { recursive: true });
+    await ensureManagerMcpSettings(cwd);
     return cwd;
   }
   const project = await repos.projects.get(projectId);
   return project.path;
+}
+
+/**
+ * Ensure the Manager's cwd contains a `.mcp.json` that wires the in-process
+ * MCP bridge (`/api/mcp`). Claude Code reads project-scoped MCP servers from
+ * `.mcp.json` — NOT from `.claude/settings.local.json`, which carries a
+ * different schema (permissions / env / etc.) and silently ignores
+ * `mcpServers` entries.
+ *
+ * We merge non-destructively so the user can hand-add more servers without
+ * having them overwritten on every Manager spawn. The bridge URL defaults to
+ * `http://localhost:3000/api/mcp`; override via `THE_MANAGER_MCP_URL`.
+ *
+ * If a stale `.claude/settings.local.json` exists from an earlier version that
+ * wrote `mcpServers` there, we strip the entry so it doesn't mislead anyone
+ * grepping the file.
+ */
+async function ensureManagerMcpSettings(cwd: string): Promise<void> {
+  const url = process.env.THE_MANAGER_MCP_URL ?? "http://localhost:3000/api/mcp";
+
+  // Primary: .mcp.json at the cwd root.
+  const mcpFile = join(cwd, ".mcp.json");
+  let existing: Record<string, unknown> = {};
+  try {
+    const raw = await readFile(mcpFile, "utf8");
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object") existing = parsed as Record<string, unknown>;
+  } catch {
+    /* no existing file or unreadable JSON — start fresh */
+  }
+  const servers = (existing.mcpServers ?? {}) as Record<string, unknown>;
+  servers["the-manager"] = { type: "http", url };
+  existing.mcpServers = servers;
+  await writeFile(mcpFile, `${JSON.stringify(existing, null, 2)}\n`, "utf8");
+
+  // Cleanup: earlier versions misplaced the entry inside settings.local.json.
+  // Strip it so the file's mcpServers key doesn't mislead future readers.
+  const staleFile = join(cwd, ".claude", "settings.local.json");
+  try {
+    const raw = await readFile(staleFile, "utf8");
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    if (parsed && typeof parsed === "object" && "mcpServers" in parsed) {
+      delete parsed.mcpServers;
+      await writeFile(staleFile, `${JSON.stringify(parsed, null, 2)}\n`, "utf8");
+    }
+  } catch {
+    /* missing or unreadable — nothing to clean up */
+  }
 }
 
 async function createSession(projectId: ProjectId, cols: number, rows: number): Promise<Session> {
@@ -69,11 +126,13 @@ async function createSession(projectId: ProjectId, cols: number, rows: number): 
     cols,
     rows,
     exited: false,
+    lastActivityAt: new Date().toISOString(),
   };
 
   handle.on("data", ({ chunk }) => {
     session.recording.push(chunk);
     session.recordingBytes += chunk.length;
+    session.lastActivityAt = new Date().toISOString();
     while (session.recordingBytes > MAX_RECORDING_BYTES && session.recording.length > 1) {
       const dropped = session.recording.shift();
       if (dropped) session.recordingBytes -= dropped.length;
@@ -146,6 +205,34 @@ export function endSession(projectId: ProjectId): void {
   if (!s) return;
   s.handle.kill("SIGTERM");
   reg.delete(projectId);
+}
+
+/**
+ * Tail of the recording buffer for the MCP bridge. Returns the last `lines`
+ * lines (or fewer if the recording is shorter); returns null if no session
+ * exists.
+ */
+export function readRecentLines(projectId: ProjectId, lines: number): string | null {
+  const s = getSession(projectId);
+  if (!s) return null;
+  const text = s.recording.join("");
+  const split = text.split("\n");
+  return split.slice(-lines).join("\n");
+}
+
+/**
+ * Snapshot of every live or recently-exited session for the sidebar status
+ * dots. Returns one entry per projectId currently in the registry.
+ */
+export function listStatuses(): Record<string, SessionStatus> {
+  const out: Record<string, SessionStatus> = {};
+  for (const [projectId, s] of registry()) {
+    out[projectId] = {
+      alive: !s.exited,
+      lastActivityAt: s.lastActivityAt,
+    };
+  }
+  return out;
 }
 
 /**

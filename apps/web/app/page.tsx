@@ -7,6 +7,7 @@ import { CommandPalette } from "../components/CommandPalette";
 import { EditProjectDialog } from "../components/EditProjectDialog";
 import { ManagerSurface } from "../components/ManagerSurface";
 import { NewProjectDialog } from "../components/NewProjectDialog";
+import { NotificationsBell } from "../components/NotificationsBell";
 import { ProjectWorkspace } from "../components/ProjectWorkspace";
 import { SettingsPanel } from "../components/SettingsPanel";
 import { type ActiveView, Sidebar } from "../components/Sidebar";
@@ -90,6 +91,7 @@ export default function HomePage() {
             <span>
               {projects.length} project{projects.length !== 1 ? "s" : ""}
             </span>
+            <NotificationsBell projects={projects} onJump={(target) => setActiveView(target)} />
           </div>
         </header>
 

@@ -255,12 +255,16 @@ interface StaleDialogProps {
 function StaleDialog({ onReload, onSaveAnyway, onClose }: StaleDialogProps) {
   return (
     <>
-      <div aria-hidden="true" className="fixed inset-0 z-40 bg-black/60" onClick={onClose} />
+      <div
+        aria-hidden="true"
+        className="animate-fade-in fixed inset-0 z-40 bg-black/60"
+        onClick={onClose}
+      />
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby="stale-dialog-title"
-        className="fixed left-1/2 top-1/2 z-50 w-full max-w-sm -translate-x-1/2 -translate-y-1/2 rounded-xl border border-zinc-800 bg-zinc-950 shadow-2xl"
+        className="animate-scale-in fixed left-1/2 top-1/2 z-50 w-full max-w-sm -translate-x-1/2 -translate-y-1/2 rounded-xl border border-zinc-800 bg-zinc-950 shadow-2xl"
       >
         <div className="p-5">
           <h2 id="stale-dialog-title" className="mb-2 text-sm font-semibold text-zinc-100">
@@ -542,13 +546,16 @@ export function FilesTab({ projectId }: FilesTabProps) {
                 {saving ? "Saving…" : "Save"}
               </Button>
             </div>
-            <div className="min-h-0 flex-1 overflow-hidden rounded-lg border border-zinc-800">
-              <MiniEditor
-                value={editorValue}
-                language={detectLanguage(selectedPath.split("/").pop() ?? "")}
-                onChange={setEditorValue}
-                height="100%"
-              />
+            <div className="relative min-h-0 flex-1 overflow-hidden rounded-lg border border-zinc-800">
+              {/* absolute inset-0 gives CodeMirror a strictly-sized container; without it, height="100%" can collapse to 0 inside the flex chain and content overflows silently. */}
+              <div className="absolute inset-0">
+                <MiniEditor
+                  value={editorValue}
+                  language={detectLanguage(selectedPath.split("/").pop() ?? "")}
+                  onChange={setEditorValue}
+                  height="100%"
+                />
+              </div>
             </div>
           </>
         ) : (
