@@ -50,6 +50,10 @@ export function MiniEditor({
       theme={oneDark}
       extensions={extensionsFor(language)}
       onChange={onChange}
+      // @uiw/react-codemirror wraps .cm-editor in an unsized <div class="cm-theme">.
+      // Without an explicit height here, long files break the 100% height chain
+      // and .cm-scroller can't scroll — the wrapper grows to content instead.
+      style={{ height, width: "100%" }}
     />
   );
 }
