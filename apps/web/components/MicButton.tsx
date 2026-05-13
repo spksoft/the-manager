@@ -161,25 +161,77 @@ export function MicButton({ onResult }: MicButtonProps) {
 
   const supported = typeof window !== "undefined" && getSRCtor() !== null;
 
-  const toggle = useCallback(() => {
+  const startListening = useCallback(() => {
     const rec = recRef.current;
-    if (!rec) return;
-    if (listening) {
-      try {
-        rec.stop();
-      } catch {
-        /* ignore */
-      }
-      return;
-    }
+    if (!rec) return false;
     setError(null);
     try {
       rec.start();
       setListening(true);
+      return true;
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      // `start()` throws synchronously if the recogniser is already running —
+      // treat that as a successful no-op so push-to-talk's keydown handler
+      // doesn't surface a scary message on a double-fire.
+      const msg = e instanceof Error ? e.message : String(e);
+      if (/already started/i.test(msg)) return true;
+      setError(msg);
+      return false;
     }
-  }, [listening]);
+  }, []);
+
+  const stopListening = useCallback(() => {
+    const rec = recRef.current;
+    if (!rec) return;
+    try {
+      rec.stop();
+    } catch {
+      /* ignore — already stopped */
+    }
+  }, []);
+
+  const toggle = useCallback(() => {
+    if (listening) stopListening();
+    else startListening();
+  }, [listening, startListening, stopListening]);
+
+  // Push-to-talk: hold Ctrl+M to record, release to stop. Captured at the
+  // window level so it works even when xterm has focus. NOTE: terminals
+  // interpret Ctrl+M as carriage return — capturing it here means that exact
+  // combo no longer reaches the pty, but the Enter key still does.
+  const pttActiveRef = useRef(false);
+  useEffect(() => {
+    if (!supported) return;
+    const isM = (e: KeyboardEvent) =>
+      e.ctrlKey && (e.code === "KeyM" || e.key.toLowerCase() === "m");
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!isM(e)) return;
+      e.preventDefault();
+      if (e.repeat || pttActiveRef.current) return;
+      if (startListening()) pttActiveRef.current = true;
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      // Release on either Ctrl or M lifting — whichever comes first ends PTT.
+      if (!pttActiveRef.current) return;
+      if (e.key === "Control" || e.code === "KeyM" || e.key.toLowerCase() === "m") {
+        pttActiveRef.current = false;
+        stopListening();
+      }
+    };
+    const onBlur = () => {
+      if (!pttActiveRef.current) return;
+      pttActiveRef.current = false;
+      stopListening();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", onBlur);
+    };
+  }, [supported, startListening, stopListening]);
 
   if (!supported) {
     return (
@@ -229,7 +281,11 @@ export function MicButton({ onResult }: MicButtonProps) {
         onClick={toggle}
         aria-pressed={listening}
         aria-label={listening ? "Stop speaking" : "Start speaking"}
-        title={listening ? "Stop listening" : "Click to speak — output is auto-sent"}
+        title={
+          listening
+            ? "Stop listening"
+            : "Click to speak — output is auto-sent. Hold Ctrl+M to push-to-talk."
+        }
         className={`rounded-md border px-2 py-1 text-sm transition-colors ${
           listening
             ? "animate-mic-pulse border-red-500/60 bg-red-500/20 text-red-300"
