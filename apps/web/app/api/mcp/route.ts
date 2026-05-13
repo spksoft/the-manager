@@ -1,5 +1,8 @@
 import "server-only";
-import type { ProjectId } from "@the-manager/shared";
+import { randomUUID } from "node:crypto";
+import { paths } from "@the-manager/persistence";
+import type { DriverId, ProjectId } from "@the-manager/shared";
+import { enqueueProjectProposal } from "../../../lib/manager-requests";
 import { repos } from "../../../lib/runtime";
 import {
   getOrCreateSession,
@@ -8,6 +11,7 @@ import {
   readRecentLines,
   writeInput,
 } from "../../../lib/sessions";
+import { destroyEphemeralProject } from "../../../lib/temp-projects";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -29,6 +33,11 @@ export const runtime = "nodejs";
  *   - get_project_status: liveness for one project's pty session.
  *   - send_to_project: write `text + \r` to a project's terminal.
  *   - read_project_terminal: tail of the project's recording buffer.
+ *   - propose_project: ask the user to register a new project (the UI surfaces
+ *     a dialog with the Manager's prefill; this call blocks until the user
+ *     confirms or cancels).
+ *   - destroy_temp_project: tear down an ephemeral project that the Manager
+ *     created earlier; refuses non-ephemeral projects.
  */
 
 interface JsonRpcRequest {
@@ -101,6 +110,54 @@ const TOOLS = [
       additionalProperties: false,
     },
   },
+  {
+    name: "propose_project",
+    description:
+      "Ask the user to register a project. The UI opens the project-creation dialog prefilled with whatever fields you provide, plus a banner showing your `reason`. The user can edit anything (including the path via the folder picker) before confirming. This call BLOCKS for up to 5 minutes waiting for the user. Returns either `{ kind: 'confirmed', project: { id, name, path, defaultDriver, ephemeral } }` or `{ kind: 'cancelled' }`. If `ephemeral: true`, the project is auto-destroyed (explicit destroy_temp_project, on Manager restart, or 24h TTL) and the dialog's ephemeral checkbox is pre-checked. Use this for: (a) starting a brand-new project on disk, (b) adding an existing repo, and (c) creating a scratch project for a long task. Always include a clear `reason` so the user understands why you're asking.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: {
+          type: "string",
+          description: "Suggested project name. The user can edit before confirming.",
+        },
+        path: {
+          type: "string",
+          description:
+            "Suggested absolute path. For ephemeral projects, omit this and the server will suggest one under ~/.the-manager/temp/<uuid>/. For non-ephemeral, the path must already exist on disk (you can suggest one anyway and the user picks the real folder).",
+        },
+        defaultDriver: {
+          type: "string",
+          enum: ["claude", "codex", "gemini"],
+          description: "Suggested driver; defaults to 'claude'.",
+        },
+        ephemeral: {
+          type: "boolean",
+          description:
+            "True for scratch / temp projects that should be auto-destroyed. Pre-checks the dialog's ephemeral checkbox.",
+        },
+        reason: {
+          type: "string",
+          description:
+            "One-sentence explanation shown to the user above the dialog form. E.g. 'I need a scratch project to draft a migration script for MongoDB 8.'",
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "destroy_temp_project",
+    description:
+      "Tear down an ephemeral project the Manager previously created via propose_project (with ephemeral: true). Kills any running session, removes the registration, and deletes the on-disk directory if it lives under ~/.the-manager/temp/. Errors if the project is NOT ephemeral — call this only for scratch projects. Use this when your long task is done so the temp project doesn't linger.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Ephemeral project id." },
+      },
+      required: ["id"],
+      additionalProperties: false,
+    },
+  },
 ];
 
 interface ToolResult {
@@ -164,6 +221,8 @@ async function callTool(rawParams: unknown): Promise<ToolResult> {
         name: p.name,
         path: p.path,
         defaultDriver: p.defaultDriver,
+        ephemeral: p.ephemeral,
+        expiresAt: p.expiresAt,
       }));
       return textResult(JSON.stringify(summary, null, 2));
     }
@@ -220,9 +279,93 @@ async function callTool(rawParams: unknown): Promise<ToolResult> {
       }
       return textResult(tail);
     }
+    case "propose_project": {
+      const payload = {
+        name: optionalStringArg(args, "name"),
+        path: optionalStringArg(args, "path"),
+        defaultDriver: optionalDriverArg(args, "defaultDriver"),
+        ephemeral: optionalBoolArg(args, "ephemeral"),
+        reason: optionalStringArg(args, "reason"),
+      };
+      // For ephemeral proposals with no suggested path, fill in a fresh temp
+      // dir under the safe root so the dialog opens with something the user
+      // can confirm without typing.
+      if (payload.ephemeral && !payload.path) {
+        const id = randomUUID();
+        payload.path = paths.tempProjectDir(id);
+        if (!payload.name) payload.name = `temp-${id.slice(0, 8)}`;
+      }
+      const result = await enqueueProjectProposal(payload);
+      if (result.kind === "cancelled") {
+        return textResult(
+          JSON.stringify({ kind: "cancelled", reason: result.reason ?? "user" }, null, 2),
+        );
+      }
+      return textResult(
+        JSON.stringify(
+          {
+            kind: "confirmed",
+            project: {
+              id: result.project.id,
+              name: result.project.name,
+              path: result.project.path,
+              defaultDriver: result.project.defaultDriver,
+              ephemeral: result.project.ephemeral,
+              expiresAt: result.project.expiresAt,
+            },
+          },
+          null,
+          2,
+        ),
+      );
+    }
+    case "destroy_temp_project": {
+      const id = stringArg(args, "id");
+      let project: Awaited<ReturnType<typeof repos.projects.get>>;
+      try {
+        project = await repos.projects.get(id as ProjectId);
+      } catch {
+        return errorResult(`project ${id} not found.`);
+      }
+      if (!project.ephemeral) {
+        return errorResult(
+          `project ${id} is not ephemeral. Only Manager-created temp projects can be destroyed by this tool.`,
+        );
+      }
+      const result = await destroyEphemeralProject(project);
+      if (result.diskError) {
+        return errorResult(
+          `removed registration but failed to delete ${project.path}: ${result.diskError}`,
+        );
+      }
+      return textResult(JSON.stringify(result, null, 2));
+    }
     default:
       return errorResult(`unknown tool: ${name}`);
   }
+}
+
+function optionalStringArg(args: Record<string, unknown>, key: string): string | undefined {
+  const v = args[key];
+  if (v === undefined || v === null) return undefined;
+  if (typeof v !== "string") throw new Error(`argument ${key} must be a string`);
+  return v;
+}
+
+function optionalBoolArg(args: Record<string, unknown>, key: string): boolean | undefined {
+  const v = args[key];
+  if (v === undefined || v === null) return undefined;
+  if (typeof v !== "boolean") throw new Error(`argument ${key} must be a boolean`);
+  return v;
+}
+
+function optionalDriverArg(args: Record<string, unknown>, key: string): DriverId | undefined {
+  const v = args[key];
+  if (v === undefined || v === null) return undefined;
+  if (v !== "claude" && v !== "codex" && v !== "gemini") {
+    throw new Error(`argument ${key} must be one of claude|codex|gemini`);
+  }
+  return v;
 }
 
 function stringArg(args: Record<string, unknown>, key: string): string {

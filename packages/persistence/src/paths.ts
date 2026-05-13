@@ -40,4 +40,11 @@ export const paths = {
   sessionTranscript: (projectId: string, sessionId: string) =>
     join(getHomeRoot(), "projects", projectId, "sessions", sessionId, "transcript.jsonl"),
   managerCwd: () => join(getHomeRoot(), "manager", "cwd"),
+  /**
+   * Root for Manager-created ephemeral project directories. `destroy_temp_project`
+   * only `rm -rf`s paths that live underneath this, so it can never wipe a
+   * user-registered project directory.
+   */
+  tempProjectsRoot: () => join(getHomeRoot(), "temp"),
+  tempProjectDir: (projectId: string) => join(getHomeRoot(), "temp", projectId),
 };

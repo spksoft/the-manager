@@ -17,6 +17,8 @@ const a = {
   defaultDriver: "claude",
   createdAt: new Date().toISOString(),
   lastUsedAt: null,
+  ephemeral: false,
+  expiresAt: null,
 };
 const b = {
   id: randomUUID(),
@@ -25,6 +27,8 @@ const b = {
   defaultDriver: "claude",
   createdAt: new Date().toISOString(),
   lastUsedAt: null,
+  ephemeral: false,
+  expiresAt: null,
 };
 
 await repo1.add(a);

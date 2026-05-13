@@ -11,6 +11,21 @@ interface NewProjectDialogProps {
   open: boolean;
   onClose: () => void;
   onCreated: (project: ProjectRow) => void;
+  /**
+   * Prefill the form. Used when the Manager proposes a project via the MCP
+   * bridge — the dialog opens with these values, but the user can still edit
+   * everything (including using the folder picker) before submitting.
+   */
+  initialValues?: {
+    name?: string;
+    path?: string;
+    defaultDriver?: DriverId;
+    ephemeral?: boolean;
+  };
+  /** Banner above the form explaining why the Manager is asking. */
+  reason?: string;
+  /** Header title; defaults to "Register Project". */
+  title?: string;
 }
 
 // Claude is the only driver wired to the chat runtime today (claude -p with
@@ -22,18 +37,36 @@ const DRIVERS: { id: DriverId; label: string; ready: boolean }[] = [
   { id: "gemini", label: "Gemini CLI", ready: false },
 ];
 
-export function NewProjectDialog({ open, onClose, onCreated }: NewProjectDialogProps) {
+export function NewProjectDialog({
+  open,
+  onClose,
+  onCreated,
+  initialValues,
+  reason,
+  title,
+}: NewProjectDialogProps) {
   const [name, setName] = useState("");
   const [path, setPath] = useState("");
   const [driver, setDriver] = useState<DriverId>("claude");
+  const [ephemeral, setEphemeral] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [browserOpen, setBrowserOpen] = useState(false);
   const firstFieldRef = useRef<HTMLInputElement>(null);
 
-  // Focus first field when opened
+  // Sync initialValues into the form whenever the dialog transitions to open.
+  // We intentionally only run on the open transition so the user's mid-edit
+  // values aren't clobbered if `initialValues` changes reference identity
+  // while the dialog stays open.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: see comment above
   useEffect(() => {
-    if (open) firstFieldRef.current?.focus();
+    if (!open) return;
+    setName(initialValues?.name ?? "");
+    setPath(initialValues?.path ?? "");
+    setDriver(initialValues?.defaultDriver ?? "claude");
+    setEphemeral(initialValues?.ephemeral ?? false);
+    setError(null);
+    firstFieldRef.current?.focus();
   }, [open]);
 
   // Close on Esc
@@ -63,7 +96,12 @@ export function NewProjectDialog({ open, onClose, onCreated }: NewProjectDialogP
       const res = await fetch("/api/projects", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: name.trim(), path: path.trim(), defaultDriver: driver }),
+        body: JSON.stringify({
+          name: name.trim(),
+          path: path.trim(),
+          defaultDriver: driver,
+          ephemeral,
+        }),
       });
       if (!res.ok) {
         const body = (await res.json()) as { message?: string };
@@ -73,6 +111,7 @@ export function NewProjectDialog({ open, onClose, onCreated }: NewProjectDialogP
       setName("");
       setPath("");
       setDriver("claude");
+      setEphemeral(false);
       onCreated(project);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -100,7 +139,7 @@ export function NewProjectDialog({ open, onClose, onCreated }: NewProjectDialogP
       >
         <header className="flex items-center justify-between border-b border-zinc-800 px-5 py-4">
           <h2 id="new-project-title" className="text-base font-semibold text-zinc-100">
-            Register Project
+            {title ?? "Register Project"}
           </h2>
           <button
             type="button"
@@ -113,6 +152,11 @@ export function NewProjectDialog({ open, onClose, onCreated }: NewProjectDialogP
         </header>
 
         <form onSubmit={submit} className="flex flex-col gap-4 px-5 py-5">
+          {reason && (
+            <div className="rounded-md border border-emerald-900/40 bg-emerald-950/40 px-3 py-2 text-xs leading-relaxed text-emerald-200">
+              <span className="font-semibold text-emerald-300">Manager:</span> {reason}
+            </div>
+          )}
           {error && <ErrorBanner message={error} onDismiss={() => setError(null)} />}
 
           <div className="flex flex-col gap-1.5">
@@ -189,6 +233,23 @@ export function NewProjectDialog({ open, onClose, onCreated }: NewProjectDialogP
               ))}
             </div>
           </div>
+
+          <label className="flex items-start gap-2 rounded-md border border-zinc-800 bg-zinc-900/40 px-3 py-2 text-xs text-zinc-300 hover:border-zinc-700">
+            <input
+              type="checkbox"
+              checked={ephemeral}
+              onChange={(e) => setEphemeral(e.target.checked)}
+              className="mt-0.5 h-3.5 w-3.5 accent-emerald-500"
+            />
+            <span>
+              <span className="font-medium text-zinc-200">Ephemeral</span>
+              <span className="ml-1 text-zinc-500">
+                — auto-destroy this project (registration + directory under{" "}
+                <code className="text-[10px]">~/.the-manager/temp/</code>) after 24h or when the
+                Manager session restarts.
+              </span>
+            </span>
+          </label>
 
           <div className="flex justify-end gap-2 pt-2">
             <Button type="button" variant="ghost" onClick={onClose} disabled={submitting}>

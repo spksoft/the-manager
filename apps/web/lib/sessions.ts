@@ -186,8 +186,10 @@ If either file is empty, just proceed with the defaults below.
 
 The MCP server **\`the-manager\`** is wired up via \`.mcp.json\` in this cwd.
 
-- **\`list_projects()\`** — every project the user has registered (id, name,
-  path, defaultDriver).
+- **\`list_projects()\`** — every project the user has registered. Each entry
+  is \`{ id, name, path, defaultDriver, ephemeral, expiresAt }\`. \`ephemeral:
+  true\` rows are scratch projects you created via \`propose_project\` — they
+  auto-destroy on 24h TTL or when this Manager session is restarted.
 - **\`get_project_status(id)\`** — \`{ alive, lastActivityAt }\`. \`alive: true\`
   means a claude session is already running for that project (usually because
   the user has its terminal open).
@@ -207,6 +209,33 @@ The MCP server **\`the-manager\`** is wired up via \`.mcp.json\` in this cwd.
   output. Use this to see the agent's response before following up. Returns
   an error if no session exists yet (call \`send_to_project\` first to spawn
   one).
+- **\`propose_project({ name?, path?, defaultDriver?, ephemeral?, reason? })\`**
+  — **ask the user to register a project**. The UI opens its project-creation
+  dialog with your prefill and a banner showing \`reason\`. The user can edit
+  any field (including swapping the folder via the picker) and confirms or
+  cancels. **This call BLOCKS until they decide** (5-minute timeout). Returns
+  \`{ kind: "confirmed", project: { id, name, path, defaultDriver, ephemeral, expiresAt } }\`
+  or \`{ kind: "cancelled" }\`. Use it for all three creation flows:
+  - **Adding an existing project**: prefill \`name\` + \`path\` you inferred
+    from the user's message; leave \`ephemeral\` off.
+  - **Creating a brand-new project**: prefill what you can; the user picks
+    the real folder.
+  - **Creating a temp/scratch project for a long task**: pass
+    \`ephemeral: true\`. Omit \`path\` and the dialog opens on a fresh
+    \`~/.the-manager/temp/<uuid>/\` directory that's created on confirm.
+  Always include a one-sentence \`reason\` — the user sees it and uses it
+  to decide whether to confirm.
+- **\`destroy_temp_project({ id })\`** — tear down an ephemeral project you
+  created earlier. Kills its session, removes the registration, and deletes
+  the on-disk directory if it lives under \`~/.the-manager/temp/\`. Errors if
+  the project isn't ephemeral. Call this when your long task is done so the
+  temp project doesn't linger. (The Manager-restart sweep and 24h TTL will
+  catch it eventually, but explicit cleanup is preferable.)
+
+**Important about \`propose_project\`:** until the user confirms, the project
+does NOT exist. Don't pretend it does, don't \`send_to_project\` with the
+prefilled id, and don't claim success in your reply. If \`cancelled\`, tell
+the user the request was cancelled and ask what to do next.
 
 ## Default workflow: delegate to the active project
 
@@ -236,8 +265,12 @@ For **every** non-trivial user message, run this loop before answering yourself:
 7. **Wait briefly, then \`read_project_terminal(targetId)\`** to confirm the
    agent picked it up. Surface its reply back to the user.
 
-If no project is registered at all, tell the user to register one — there's
-nothing to delegate to.
+If no project is registered at all, or the user's request doesn't fit any
+registered project, you can **propose creating one** yourself via
+\`propose_project\` — pre-fill what you can infer from the user's message
+(name, suggested path, ephemeral if it's clearly a one-off task) and let the
+user confirm. Don't insist on creation if listing existing projects + asking
+one short question would do.
 
 ## Prefer slash commands and skills over free-form prompts
 

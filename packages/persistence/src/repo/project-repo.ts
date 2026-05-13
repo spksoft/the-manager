@@ -3,11 +3,40 @@ import { paths } from "../paths";
 import { type ProjectRow, ProjectsIndexSchema } from "../schemas";
 import { JsonStore } from "../store";
 
+/**
+ * v1 → v2 stamps `ephemeral: false` and `expiresAt: null` on every row.
+ * Pre-existing files were written by an older app version that didn't know
+ * about ephemeral projects; everything in them is by definition persistent.
+ */
+function projectsMigrate(raw: unknown): unknown {
+  if (!raw || typeof raw !== "object") return raw;
+  const file = raw as { version?: number; data?: unknown };
+  if (file.version === 2) return raw;
+  if (file.version !== 1) return raw;
+  const data = Array.isArray(file.data) ? file.data : [];
+  return {
+    version: 2,
+    data: data.map((row) => {
+      const r = (row ?? {}) as Record<string, unknown>;
+      return {
+        ...r,
+        ephemeral: r.ephemeral ?? false,
+        expiresAt: r.expiresAt ?? null,
+      };
+    }),
+  };
+}
+
 export class ProjectRepo {
-  private readonly store = new JsonStore(paths.projectsIndex(), ProjectsIndexSchema, () => ({
-    version: 1 as const,
-    data: [],
-  }));
+  private readonly store = new JsonStore(
+    paths.projectsIndex(),
+    ProjectsIndexSchema,
+    () => ({
+      version: 2 as const,
+      data: [],
+    }),
+    projectsMigrate,
+  );
 
   async list(): Promise<ProjectRow[]> {
     const file = await this.store.load();
@@ -65,5 +94,20 @@ export class ProjectRepo {
       ...file,
       data: file.data.map((p) => (p.id === id ? { ...p, lastUsedAt: at } : p)),
     }));
+  }
+
+  /** Ephemeral rows whose `expiresAt` has passed. Used by the TTL sweeper. */
+  async listEphemeralExpired(now: Date = new Date()): Promise<ProjectRow[]> {
+    const all = await this.list();
+    const nowMs = now.getTime();
+    return all.filter(
+      (p) => p.ephemeral && p.expiresAt !== null && Date.parse(p.expiresAt) <= nowMs,
+    );
+  }
+
+  /** All ephemeral rows, regardless of expiry. Used by the on-restart sweep. */
+  async listEphemeral(): Promise<ProjectRow[]> {
+    const all = await this.list();
+    return all.filter((p) => p.ephemeral);
   }
 }

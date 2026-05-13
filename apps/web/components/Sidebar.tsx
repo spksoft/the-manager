@@ -125,6 +125,20 @@ export function Sidebar({
               <SidebarItem
                 key={p.id}
                 label={p.name}
+                trailing={
+                  p.ephemeral ? (
+                    <span
+                      title={
+                        p.expiresAt
+                          ? `Ephemeral — auto-destroyed after ${new Date(p.expiresAt).toLocaleString()}`
+                          : "Ephemeral — auto-destroyed by the Manager"
+                      }
+                      className="rounded border border-amber-700/60 bg-amber-900/20 px-1 py-px text-[9px] font-semibold uppercase tracking-wider text-amber-300"
+                    >
+                      temp
+                    </span>
+                  ) : undefined
+                }
                 icon={
                   dot ? (
                     <span

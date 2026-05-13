@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { AssetBrowser } from "../components/AssetBrowser";
 import { CommandPalette } from "../components/CommandPalette";
 import { EditProjectDialog } from "../components/EditProjectDialog";
+import { ManagerRequestBroker } from "../components/ManagerRequestBroker";
 import { ManagerSurface } from "../components/ManagerSurface";
 import { NewProjectDialog } from "../components/NewProjectDialog";
 import { NotificationsBell } from "../components/NotificationsBell";
@@ -119,6 +120,12 @@ export default function HomePage() {
         onUpdated={(updated) => {
           void mutateProjects((projects ?? []).map((p) => (p.id === updated.id ? updated : p)));
           setEditingProject(null);
+        }}
+      />
+      <ManagerRequestBroker
+        onCreated={(project) => {
+          void mutateProjects([...(projects ?? []), project]);
+          setActiveView({ type: "project", id: project.id });
         }}
       />
       <CommandPalette open={commandPaletteOpen} onClose={() => setCommandPaletteOpen(false)} />

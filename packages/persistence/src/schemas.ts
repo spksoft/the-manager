@@ -16,11 +16,15 @@ export const ProjectSchema = z.object({
   defaultDriver: DriverIdSchema,
   createdAt: z.string().datetime(),
   lastUsedAt: z.string().datetime().nullable(),
+  /** Manager-created scratch projects that get auto-destroyed. */
+  ephemeral: z.boolean(),
+  /** Optional auto-destroy deadline (ISO). `null` = never. */
+  expiresAt: z.string().datetime().nullable(),
 });
 export type ProjectRow = z.infer<typeof ProjectSchema>;
 
 export const ProjectsIndexSchema = z.object({
-  version: z.literal(1),
+  version: z.literal(2),
   data: z.array(ProjectSchema),
 });
 
