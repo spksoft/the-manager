@@ -1,6 +1,13 @@
 "use client";
 
-import { ArrowDownIcon, ArrowUpIcon, MenuIcon, RefreshCwIcon, XIcon } from "lucide-react";
+import {
+  ArrowDownIcon,
+  ArrowDownUpIcon,
+  ArrowUpIcon,
+  MenuIcon,
+  RefreshCwIcon,
+  XIcon,
+} from "lucide-react";
 
 interface TopBarProps {
   branch: string | null;
@@ -11,6 +18,7 @@ interface TopBarProps {
   progress: { method: string; stage: string; pct: number } | null;
   onFetch: () => void;
   onPull: () => void;
+  onSync: () => void;
   onPush: () => void;
   onForcePush: () => void;
   onCancel: () => void;
@@ -27,6 +35,7 @@ export function TopBar({
   progress,
   onFetch,
   onPull,
+  onSync,
   onPush,
   onForcePush,
   onCancel,
@@ -75,6 +84,14 @@ export function TopBar({
             disabled={busy || !tracking}
             title={!tracking ? "No upstream — set one before pulling" : "Pull from upstream"}
             highlight={behind > 0}
+          />
+          <ActionButton
+            label="Sync"
+            icon={<ArrowDownUpIcon className="h-3 w-3" />}
+            onClick={onSync}
+            disabled={busy || !tracking}
+            highlight={ahead > 0 || behind > 0}
+            title={!tracking ? "No upstream — set one before syncing" : "Pull then push"}
           />
           <ActionButton
             label="Push"

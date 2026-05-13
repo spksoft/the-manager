@@ -268,6 +268,70 @@ export function GitWorkspace({ projectId }: GitWorkspaceProps) {
     remoteHandleRef.current?.cancel();
   };
 
+  // Sync = pull, then push. Single in-flight via remoteHandleRef. Cancel mid-pull
+  // must NOT auto-proceed to push, so we gate on an explicit pullSucceeded flag
+  // set only inside the pull's onDone handler.
+  const runSync = () => {
+    if (remoteHandleRef.current) return;
+    setActionError(null);
+    setBusy("remote:sync", true);
+    dispatch({
+      type: "setProgress",
+      progress: { method: "sync", stage: "pull · starting…", pct: 0 },
+    });
+
+    const startPush = () => {
+      dispatch({
+        type: "setProgress",
+        progress: { method: "sync", stage: "push · starting…", pct: 0 },
+      });
+      remoteHandleRef.current = streamRemoteOp(
+        projectId,
+        { action: "push", setUpstream: !status?.tracking },
+        {
+          onProgress: (e) =>
+            dispatch({
+              type: "setProgress",
+              progress: { method: "sync", stage: `push · ${e.stage}`, pct: e.progress },
+            }),
+          onDone: () => void invalidate({ git: true, branches: true, graph: true }),
+          onError: (m) => setActionError(m),
+        },
+      );
+      void remoteHandleRef.current.finished.then(() => {
+        remoteHandleRef.current = null;
+        setBusy("remote:sync", false);
+        dispatch({ type: "setProgress", progress: null });
+      });
+    };
+
+    let pullSucceeded = false;
+    remoteHandleRef.current = streamRemoteOp(
+      projectId,
+      { action: "pull" },
+      {
+        onProgress: (e) =>
+          dispatch({
+            type: "setProgress",
+            progress: { method: "sync", stage: `pull · ${e.stage}`, pct: e.progress },
+          }),
+        onDone: () => {
+          pullSucceeded = true;
+        },
+        onError: (m) => setActionError(m),
+      },
+    );
+    void remoteHandleRef.current.finished.then(() => {
+      remoteHandleRef.current = null;
+      if (!pullSucceeded) {
+        setBusy("remote:sync", false);
+        dispatch({ type: "setProgress", progress: null });
+        return;
+      }
+      void invalidate({ git: true, branches: true, graph: true }).then(startPush);
+    });
+  };
+
   // Mobile UX: auto-open the detail sheet when the user picks a working-tree
   // file or a commit. The right-pane content isn't visible inline on phones,
   // so the sheet stands in for it.
@@ -382,6 +446,7 @@ export function GitWorkspace({ projectId }: GitWorkspaceProps) {
             progress={view.progress}
             onFetch={() => runRemoteOp({ action: "fetch" })}
             onPull={() => runRemoteOp({ action: "pull" })}
+            onSync={runSync}
             onPush={() =>
               runRemoteOp({
                 action: "push",
