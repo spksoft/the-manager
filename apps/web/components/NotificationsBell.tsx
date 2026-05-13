@@ -30,7 +30,7 @@ interface ProjectGroup {
  * document visibility state. Urgent events (`needs_input`) always sound.
  */
 export function NotificationsBell({ projects, onJump }: NotificationsBellProps) {
-  const { events, muted, unreadCount, ack, mute, unmute, hydrated } = useNotifications();
+  const { events, muted, unreadCount, ack, mute, unmute, clear, hydrated } = useNotifications();
   const { data: settings } = useSettings();
   const { data: uiState } = useUiState();
   const [open, setOpen] = useState(false);
@@ -193,17 +193,27 @@ export function NotificationsBell({ projects, onJump }: NotificationsBellProps) 
                 Notifications
               </span>
               {events.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    const ids = events.filter((e) => !e.readAt).map((e) => e.id);
-                    if (ids.length > 0) ack(ids);
-                  }}
-                  className="text-[11px] text-zinc-500 hover:text-zinc-200"
-                  aria-label="Mark all as read"
-                >
-                  Mark all read
-                </button>
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const ids = events.filter((e) => !e.readAt).map((e) => e.id);
+                      if (ids.length > 0) ack(ids);
+                    }}
+                    className="text-[11px] text-zinc-500 hover:text-zinc-200"
+                    aria-label="Mark all as read"
+                  >
+                    Mark all read
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => clear()}
+                    className="text-[11px] text-zinc-500 hover:text-zinc-200"
+                    aria-label="Clear all notifications"
+                  >
+                    Clear all
+                  </button>
+                </div>
               )}
             </header>
             {groups.length === 0 ? (
@@ -276,6 +286,15 @@ export function NotificationsBell({ projects, onJump }: NotificationsBellProps) 
                                 >
                                   Jump
                                 </button>
+                                <button
+                                  type="button"
+                                  onClick={() => clear([e.id])}
+                                  className="text-zinc-600 hover:text-zinc-200"
+                                  aria-label="Dismiss notification"
+                                  title="Dismiss"
+                                >
+                                  ✕
+                                </button>
                               </li>
                             ))}
                           </ul>
@@ -286,6 +305,14 @@ export function NotificationsBell({ projects, onJump }: NotificationsBellProps) 
                               className="hover:text-zinc-100"
                             >
                               Open project
+                            </button>
+                            <span className="text-zinc-700">·</span>
+                            <button
+                              type="button"
+                              onClick={() => clear(g.events.map((e) => e.id))}
+                              className="hover:text-zinc-100"
+                            >
+                              Clear
                             </button>
                             <span className="text-zinc-700">·</span>
                             {isMuted ? (

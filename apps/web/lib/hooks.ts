@@ -670,6 +670,8 @@ export interface UseNotificationsResult {
   /** Mute a project for 1 hour or forever. */
   mute: (projectId: string, duration: "1h" | "forever") => void;
   unmute: (projectId: string) => void;
+  /** Drop events from the ring. No ids = clear everything. */
+  clear: (ids?: string[]) => void;
   /** True once the initial snapshot has arrived. */
   hydrated: boolean;
 }
@@ -722,11 +724,18 @@ export function useNotifications(): UseNotificationsResult {
         return next;
       });
     };
+    const onClear = (e: MessageEvent) => {
+      const data = safeParse<{ ids: string[] }>(e.data, { ids: [] });
+      if (data.ids.length === 0) return;
+      const set = new Set(data.ids);
+      setEvents((prev) => prev.filter((p) => !set.has(p.id)));
+    };
 
     es.addEventListener("snapshot", onSnapshot);
     es.addEventListener("event", onEvent);
     es.addEventListener("ack", onAck);
     es.addEventListener("mute", onMute);
+    es.addEventListener("clear", onClear);
 
     return () => {
       es.close();
@@ -758,9 +767,17 @@ export function useNotifications(): UseNotificationsResult {
     });
   }, []);
 
+  const clear = useCallback((ids?: string[]) => {
+    void fetch("/api/notifications/clear", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(ids && ids.length > 0 ? { ids } : {}),
+    });
+  }, []);
+
   const unreadCount = events.reduce((n, e) => (e.readAt ? n : n + 1), 0);
 
-  return { events, muted, unreadCount, ack, mute, unmute, hydrated };
+  return { events, muted, unreadCount, ack, mute, unmute, clear, hydrated };
 }
 
 function safeParse<T>(raw: string | undefined, fallback: T): T {

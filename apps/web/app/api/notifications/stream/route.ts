@@ -21,6 +21,7 @@ export const runtime = "nodejs";
  *   event: event      data: NotificationEvent
  *   event: ack        data: { ids: string[] }
  *   event: mute       data: { projectId, entry: MuteEntry | null }
+ *   event: clear      data: { ids: string[] }
  */
 export async function GET(req: Request) {
   try {
@@ -43,6 +44,7 @@ export async function GET(req: Request) {
           onEvent: (e: NotificationEvent) => send("event", e),
           onAck: (p) => send("ack", p),
           onMute: (p) => send("mute", p),
+          onClear: (p) => send("clear", p),
         });
 
         const close = () => {

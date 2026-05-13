@@ -130,6 +130,33 @@ export function ackNotifications(ids: string[]): void {
 }
 
 /**
+ * Drop events from the ring. With no ids (or empty array) clears everything;
+ * otherwise removes the specified events. Broadcasts so connected tabs prune
+ * their local lists. Returns the ids actually removed.
+ */
+export function clearNotifications(ids?: string[]): string[] {
+  const reg = registry();
+  if (reg.ring.length === 0) return [];
+  let removed: string[];
+  if (!ids || ids.length === 0) {
+    removed = reg.ring.map((e) => e.id);
+    reg.ring.length = 0;
+  } else {
+    const set = new Set(ids);
+    removed = [];
+    reg.ring = reg.ring.filter((e) => {
+      if (set.has(e.id)) {
+        removed.push(e.id);
+        return false;
+      }
+      return true;
+    });
+  }
+  if (removed.length > 0) reg.emitter.emit("clear", { ids: removed });
+  return removed;
+}
+
+/**
  * Set or clear a mute for a project. Persists to settings and broadcasts to
  * subscribers. `until = null` clears the mute.
  */
@@ -184,6 +211,7 @@ export interface NotificationSubscribers {
   onEvent: (e: NotificationEvent) => void;
   onAck: (p: { ids: string[] }) => void;
   onMute: (p: { projectId: string; entry: NotificationMuteEntry | null }) => void;
+  onClear: (p: { ids: string[] }) => void;
 }
 
 export function subscribeNotifications(handlers: NotificationSubscribers): () => void {
@@ -191,9 +219,11 @@ export function subscribeNotifications(handlers: NotificationSubscribers): () =>
   reg.emitter.on("event", handlers.onEvent);
   reg.emitter.on("ack", handlers.onAck);
   reg.emitter.on("mute", handlers.onMute);
+  reg.emitter.on("clear", handlers.onClear);
   return () => {
     reg.emitter.off("event", handlers.onEvent);
     reg.emitter.off("ack", handlers.onAck);
     reg.emitter.off("mute", handlers.onMute);
+    reg.emitter.off("clear", handlers.onClear);
   };
 }
