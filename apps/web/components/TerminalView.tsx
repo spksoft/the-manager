@@ -182,16 +182,27 @@ export function TerminalView({ projectId }: TerminalViewProps) {
     }
   }, [projectId]);
 
-  // STT → terminal: recognised text is auto-submitted (carriage return appended).
+  // STT → terminal: recognised text is auto-submitted. We deliberately send the
+  // text and the Enter as two separate writes with a short gap. Claude Code's
+  // TUI input uses Ink's paste detection — a multi-character chunk that arrives
+  // in one read is treated as a paste, so a trailing `\r` inside it becomes a
+  // newline in the input buffer instead of a submit. Splitting forces a second
+  // pty read that claude sees as a real Enter keystroke.
   const handleVoiceInput = useCallback(
-    (text: string) => {
-      void fetch(`/api/projects/${projectId}/terminal`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type: "input", data: `${text}\r` }),
-      }).catch((e: unknown) => {
+    async (text: string) => {
+      const post = (data: string) =>
+        fetch(`/api/projects/${projectId}/terminal`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ type: "input", data }),
+        });
+      try {
+        await post(text);
+        await new Promise((resolve) => setTimeout(resolve, 80));
+        await post("\r");
+      } catch (e: unknown) {
         setError(e instanceof Error ? e.message : String(e));
-      });
+      }
     },
     [projectId],
   );

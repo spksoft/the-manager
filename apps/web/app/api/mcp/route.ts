@@ -169,12 +169,19 @@ async function callTool(rawParams: unknown): Promise<ToolResult> {
     case "send_to_project": {
       const id = stringArg(args, "id");
       const text = stringArg(args, "text");
-      const ok = writeInput(id as ProjectId, `${text}\r`);
-      if (!ok) {
+      // Two writes with a short gap. Claude Code's TUI input uses Ink's paste
+      // detection: a multi-char chunk arriving in one read is treated as a
+      // paste, so a trailing `\r` becomes a newline in the input buffer rather
+      // than a submit. Sending Enter as its own pty read makes claude see it
+      // as a real Enter keystroke.
+      const okText = writeInput(id as ProjectId, text);
+      if (!okText) {
         return errorResult(
           `no live session for project ${id} — the user must open its terminal first.`,
         );
       }
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      writeInput(id as ProjectId, "\r");
       return textResult("sent");
     }
     case "read_project_terminal": {
