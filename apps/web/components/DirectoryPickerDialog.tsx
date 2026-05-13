@@ -1,7 +1,7 @@
 "use client";
 
 import { Button } from "@the-manager/ui";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ErrorBanner } from "./ErrorBanner";
 
 interface DirectoryListResponse {
@@ -36,6 +36,10 @@ export function DirectoryPickerDialog({
   const [entries, setEntries] = useState<{ name: string }[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [newFolderName, setNewFolderName] = useState("");
+  const [submittingNew, setSubmittingNew] = useState(false);
+  const newFolderInputRef = useRef<HTMLInputElement>(null);
 
   const navigate = useCallback(async (target?: string) => {
     setLoading(true);
@@ -62,6 +66,8 @@ export function DirectoryPickerDialog({
   // Reload from the seed path whenever the dialog opens.
   useEffect(() => {
     if (!open) return;
+    setCreating(false);
+    setNewFolderName("");
     void navigate(initialPath && initialPath.trim().length > 0 ? initialPath : undefined);
   }, [open, initialPath, navigate]);
 
@@ -80,6 +86,30 @@ export function DirectoryPickerDialog({
     e.preventDefault();
     const value = draft.trim();
     if (value.length > 0) void navigate(value);
+  };
+
+  const submitNewFolder = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const name = newFolderName.trim();
+    if (!path || name.length === 0) return;
+    setSubmittingNew(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/fs/mkdir", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ parent: path, name }),
+      });
+      const body = (await res.json()) as { path?: string; message?: string };
+      if (!res.ok) throw new Error(body.message ?? `HTTP ${res.status}`);
+      setCreating(false);
+      setNewFolderName("");
+      await navigate(body.path ?? path);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSubmittingNew(false);
+    }
   };
 
   return (
@@ -125,7 +155,54 @@ export function DirectoryPickerDialog({
             <Button type="submit" variant="ghost" disabled={loading}>
               Go
             </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              disabled={loading || !path || creating}
+              onClick={() => {
+                setCreating(true);
+                setNewFolderName("");
+                setError(null);
+                // Defer focus until after the input is mounted.
+                requestAnimationFrame(() => newFolderInputRef.current?.focus());
+              }}
+            >
+              New folder
+            </Button>
           </form>
+
+          {creating && (
+            <form onSubmit={submitNewFolder} className="flex gap-2">
+              <input
+                ref={newFolderInputRef}
+                type="text"
+                value={newFolderName}
+                onChange={(e) => setNewFolderName(e.target.value)}
+                spellCheck={false}
+                aria-label="New folder name"
+                placeholder="folder-name"
+                className="flex-1 rounded-md border border-zinc-800 bg-zinc-900/60 px-3 py-1.5 font-mono text-xs text-zinc-100 placeholder:text-zinc-600 focus:border-zinc-600 focus:outline-none"
+              />
+              <Button
+                type="submit"
+                variant="ghost"
+                disabled={submittingNew || newFolderName.trim().length === 0}
+              >
+                {submittingNew ? "Creating…" : "Create"}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                disabled={submittingNew}
+                onClick={() => {
+                  setCreating(false);
+                  setNewFolderName("");
+                }}
+              >
+                Cancel
+              </Button>
+            </form>
+          )}
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto border-t border-zinc-900 px-2 py-2">
