@@ -187,7 +187,14 @@ export function MicButton({ onResult }: MicButtonProps) {
     };
   }, [lang, emitResult]);
 
-  const supported = typeof window !== "undefined" && getSRCtor() !== null;
+  // Defer the support check to a post-mount effect so SSR and the first client
+  // render produce the same tree — otherwise Next.js complains about a
+  // hydration mismatch (server renders the disabled fallback, client renders
+  // the live mic UI).
+  const [supported, setSupported] = useState(false);
+  useEffect(() => {
+    setSupported(getSRCtor() !== null);
+  }, []);
 
   const startListening = useCallback(() => {
     const rec = recRef.current;
