@@ -191,10 +191,18 @@ The MCP server **\`the-manager\`** is wired up via \`.mcp.json\` in this cwd.
 - **\`get_project_status(id)\`** — \`{ alive, lastActivityAt }\`. \`alive: true\`
   means a claude session is already running for that project (usually because
   the user has its terminal open).
-- **\`send_to_project(id, text)\`** — types \`text\` (plus Enter) into the
-  project's interactive terminal as the user. **Auto-spawns** the project's
-  claude session if it isn't running yet — you don't need the user to open
-  the project tab first. This is how you delegate.
+- **\`send_to_project(id, text)\`** — types \`text\` into the project's
+  interactive terminal as the user. **Auto-spawns** the project's claude
+  session if it isn't running yet — you don't need the user to open the
+  project tab first. This is how you delegate.
+  - If the session was **already alive**, Enter is appended automatically
+    and the prompt is submitted (returns \`"sent"\`).
+  - If this call had to **cold-spawn** the session, the text is typed but
+    Enter is **not** pressed — the prompt sits in the user's input box for
+    them to review and submit (returns \`"spawned"\`). In that case, do not
+    call \`read_project_terminal\` waiting for a reply; the user hasn't
+    submitted yet. Tell them the prompt is queued in the project's terminal
+    and they can press Enter when ready.
 - **\`read_project_terminal(id, lines?)\`** — tail of the project agent's pty
   output. Use this to see the agent's response before following up. Returns
   an error if no session exists yet (call \`send_to_project\` first to spawn

@@ -3,6 +3,7 @@ import type { ProjectId } from "@the-manager/shared";
 import { repos } from "../../../lib/runtime";
 import {
   getOrCreateSession,
+  getSession,
   listStatuses,
   readRecentLines,
   writeInput,
@@ -67,7 +68,7 @@ const TOOLS = [
   {
     name: "send_to_project",
     description:
-      "Write text to a project's interactive claude terminal as if the user had typed it. Appends Enter automatically. Spawns the project's claude session if it isn't already running, so you can delegate without the user having opened that project's terminal first. Returns 'sent' on success.",
+      "Write text to a project's interactive claude terminal as if the user had typed it. If the project's claude session is already running, Enter is appended automatically (the prompt is submitted). If the session has to be cold-spawned by this call, the text is typed but Enter is NOT pressed — the prompt sits in the user's input box for them to review and submit. Returns 'sent' (existing session, submitted) or 'spawned' (cold spawn, prompt typed but not submitted).",
     inputSchema: {
       type: "object",
       properties: {
@@ -174,6 +175,12 @@ async function callTool(rawParams: unknown): Promise<ToolResult> {
     case "send_to_project": {
       const id = stringArg(args, "id");
       const text = stringArg(args, "text");
+      // Track whether the session was already alive before this call. On a
+      // cold spawn we type the prompt but deliberately skip the trailing
+      // Enter so the user sees it in their input box and submits it
+      // themselves — gives them a chance to review what the Manager is
+      // about to ask the project agent to do.
+      const wasAlive = getSession(id as ProjectId) !== null;
       // Auto-spawn if the user hasn't opened this project's terminal yet —
       // delegation shouldn't require the user to pre-click into a tab. The
       // pty is born at the driver's default size; when the user later opens
@@ -193,6 +200,11 @@ async function callTool(rawParams: unknown): Promise<ToolResult> {
       const okText = writeInput(id as ProjectId, text);
       if (!okText) {
         return errorResult(`failed to write to session for project ${id}.`);
+      }
+      if (!wasAlive) {
+        // Cold spawn: leave the prompt pre-filled in claude's input box for
+        // the user to review and submit. No Enter.
+        return textResult("spawned");
       }
       await new Promise((resolve) => setTimeout(resolve, 80));
       writeInput(id as ProjectId, "\r");
