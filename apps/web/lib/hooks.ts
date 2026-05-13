@@ -226,6 +226,10 @@ export function useUiState() {
           ...current.activeTabByProject,
           ...(partial.activeTabByProject ?? {}),
         },
+        commitMessageDraftByProject: {
+          ...current.commitMessageDraftByProject,
+          ...(partial.commitMessageDraftByProject ?? {}),
+        },
       };
       void mutate(UI_STATE_KEY, next, { revalidate: false });
     }
@@ -254,6 +258,14 @@ export async function setManagerTab(
   tab: ManagerTab,
 ): Promise<void> {
   await patchUiState({ activeTabManager: tab });
+}
+
+export async function setCommitMessageDraft(
+  patchUiState: (partial: Partial<UiStateData>) => Promise<void>,
+  projectId: string,
+  message: string,
+): Promise<void> {
+  await patchUiState({ commitMessageDraftByProject: { [projectId]: message } });
 }
 
 // ---------------------------------------------------------------------------

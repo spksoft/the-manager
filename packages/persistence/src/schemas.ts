@@ -136,6 +136,9 @@ export const UiStateSchema = z.object({
     activeView: ActiveViewSchema,
     activeTabByProject: z.record(ProjectTabSchema),
     activeTabManager: ManagerTabSchema,
+    // Per-project draft of the next commit message. Survives reloads so the
+    // user doesn't lose a half-typed message (or a Claude-generated draft).
+    commitMessageDraftByProject: z.record(z.string()),
   }),
 });
 export type UiStateFile = z.infer<typeof UiStateSchema>;

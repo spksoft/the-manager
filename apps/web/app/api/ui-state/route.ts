@@ -11,6 +11,9 @@ const PatchBody = z.object({
   activeView: ActiveViewSchema.optional(),
   activeTabByProject: z.record(ProjectTabSchema).optional(),
   activeTabManager: ManagerTabSchema.optional(),
+  // 16 KiB per project cap — a commit message body that long is almost
+  // certainly Claude pasting back the diff. Reject before it hits disk.
+  commitMessageDraftByProject: z.record(z.string().max(16_384)).optional(),
 });
 
 export async function GET() {
