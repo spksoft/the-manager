@@ -1,4 +1,4 @@
-# The Manager
+# The Manager 
 
 A meta-agent app for orchestrating CLI coding agents (Claude Code first; Codex / Gemini CLIs later) across multiple projects. Ships as a Next.js web app, an Electron desktop app, and a self-hosted Node server — all from one codebase.
 
