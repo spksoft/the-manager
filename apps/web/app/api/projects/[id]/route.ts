@@ -62,6 +62,8 @@ export async function DELETE(_req: Request, ctx: { params: Promise<{ id: string 
   try {
     const { id } = await ctx.params;
     await repos.projects.remove(id as ProjectId);
+    await repos.uiState.forgetProject(id);
+    await repos.fileDrafts.forgetProject(id);
     return new Response(null, { status: 204 });
   } catch (err) {
     return handleErr(err);

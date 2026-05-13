@@ -112,3 +112,49 @@ export const TranscriptLineSchema = z.object({
   content: z.string(),
 });
 export type TranscriptLine = z.infer<typeof TranscriptLineSchema>;
+
+// ---------------------------------------------------------------------------
+// UI state (single-user, single-process). Persisted so opening the app from a
+// fresh tab restores which workspace/tab the user was in.
+// ---------------------------------------------------------------------------
+export const ActiveViewSchema = z.union([
+  z.object({ type: z.literal("manager") }),
+  z.object({ type: z.literal("project"), id: z.string().uuid() }),
+  z.object({ type: z.literal("assets") }),
+]);
+export type ActiveView = z.infer<typeof ActiveViewSchema>;
+
+export const ProjectTabSchema = z.enum(["agent", "files", "git"]);
+export type ProjectTab = z.infer<typeof ProjectTabSchema>;
+
+export const ManagerTabSchema = z.enum(["agent", "files"]);
+export type ManagerTab = z.infer<typeof ManagerTabSchema>;
+
+export const UiStateSchema = z.object({
+  version: z.literal(1),
+  data: z.object({
+    activeView: ActiveViewSchema,
+    activeTabByProject: z.record(ProjectTabSchema),
+    activeTabManager: ManagerTabSchema,
+  }),
+});
+export type UiStateFile = z.infer<typeof UiStateSchema>;
+export type UiStateData = UiStateFile["data"];
+
+// ---------------------------------------------------------------------------
+// File editor drafts. Keyed by `${projectId}:${path}`; cleared on save.
+// `baseMtime` is the on-disk mtime the draft was written against — used to
+// discard the draft when the file changes underneath us.
+// ---------------------------------------------------------------------------
+export const FileDraftSchema = z.object({
+  content: z.string(),
+  baseMtime: z.string(),
+  updatedAt: z.string().datetime(),
+});
+export type FileDraftRow = z.infer<typeof FileDraftSchema>;
+
+export const FileDraftsSchema = z.object({
+  version: z.literal(1),
+  drafts: z.record(FileDraftSchema),
+});
+export type FileDraftsFile = z.infer<typeof FileDraftsSchema>;

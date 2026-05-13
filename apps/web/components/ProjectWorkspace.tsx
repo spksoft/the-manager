@@ -1,8 +1,7 @@
 "use client";
 
 import { cn } from "@the-manager/ui";
-import { useState } from "react";
-import { useProject } from "../lib/hooks";
+import { setProjectTab, useProject, useUiState } from "../lib/hooks";
 import { ErrorBanner } from "./ErrorBanner";
 import { FilesTab } from "./FilesTab";
 import { GitTab } from "./GitTab";
@@ -20,7 +19,8 @@ interface ProjectWorkspaceProps {
 }
 
 export function ProjectWorkspace({ projectId }: ProjectWorkspaceProps) {
-  const [activeTab, setActiveTab] = useState<Tab>("agent");
+  const { data: uiState, patchUiState } = useUiState();
+  const activeTab: Tab = uiState?.activeTabByProject?.[projectId] ?? "agent";
   const { error } = useProject(projectId);
 
   if (error) {
@@ -41,7 +41,7 @@ export function ProjectWorkspace({ projectId }: ProjectWorkspaceProps) {
             role="tab"
             type="button"
             aria-selected={activeTab === t.id}
-            onClick={() => setActiveTab(t.id)}
+            onClick={() => void setProjectTab(patchUiState, projectId, t.id)}
             className={cn(
               "rounded-t-md px-4 py-2 text-sm font-medium transition-colors",
               activeTab === t.id

@@ -2,6 +2,7 @@
 
 import type { ProjectRow } from "@the-manager/persistence";
 import { useEffect, useMemo, useState } from "react";
+import { useSWRConfig } from "swr";
 import { AssetBrowser } from "../components/AssetBrowser";
 import { CommandPalette } from "../components/CommandPalette";
 import { EditProjectDialog } from "../components/EditProjectDialog";
@@ -12,10 +13,14 @@ import { NotificationsBell } from "../components/NotificationsBell";
 import { ProjectWorkspace } from "../components/ProjectWorkspace";
 import { SettingsPanel } from "../components/SettingsPanel";
 import { type ActiveView, Sidebar } from "../components/Sidebar";
-import { useProjects } from "../lib/hooks";
+import { useProjects, useUiState } from "../lib/hooks";
 
 export default function HomePage() {
-  const [activeView, setActiveView] = useState<ActiveView>({ type: "manager" });
+  const { data: uiState, patchUiState } = useUiState();
+  const activeView: ActiveView = uiState?.activeView ?? { type: "manager" };
+  const setActiveView = (view: ActiveView) => void patchUiState({ activeView: view });
+  const { mutate: swrMutate } = useSWRConfig();
+
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [newProjectOpen, setNewProjectOpen] = useState(false);
   const [editingProject, setEditingProject] = useState<ProjectRow | null>(null);
@@ -75,9 +80,9 @@ export default function HomePage() {
           }
           await fetch(`/api/projects/${id}`, { method: "DELETE" });
           void mutateProjects(projects.filter((p) => p.id !== id));
-          if (activeView.type === "project" && activeView.id === id) {
-            setActiveView({ type: "manager" });
-          }
+          // Server's DELETE handler also clears any ui-state pointing at this
+          // project; revalidate so the activeView reflects that.
+          void swrMutate("/api/ui-state");
         }}
         onOpenSettings={() => setSettingsOpen(true)}
       />

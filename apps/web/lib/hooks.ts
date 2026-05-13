@@ -1,7 +1,15 @@
 "use client";
 
-import type { AssetRow, ProjectRow, SettingsFile } from "@the-manager/persistence";
-import useSWR from "swr";
+import type {
+  AssetRow,
+  FileDraftRow,
+  ManagerTab,
+  ProjectRow,
+  ProjectTab,
+  SettingsFile,
+  UiStateData,
+} from "@the-manager/persistence";
+import useSWR, { useSWRConfig } from "swr";
 
 // ---------------------------------------------------------------------------
 // Fetcher — throws on non-2xx so SWR treats it as an error.
@@ -136,4 +144,95 @@ export function useSessionStatuses() {
 // ---------------------------------------------------------------------------
 export function useSettings() {
   return useSWR<SettingsFile>("/api/settings", fetcher);
+}
+
+// ---------------------------------------------------------------------------
+// UI state (active view + active tabs). Persisted server-side so opening any
+// tab/URL hydrates to the last-known navigation state.
+// ---------------------------------------------------------------------------
+const UI_STATE_KEY = "/api/ui-state";
+
+export function useUiState() {
+  const swr = useSWR<UiStateData>(UI_STATE_KEY, fetcher);
+  const { mutate } = useSWRConfig();
+
+  // Optimistically merge `partial` into the cached value and PUT to the server.
+  // Server's response wins for the cache once it lands.
+  const patchUiState = async (partial: Partial<UiStateData>): Promise<void> => {
+    const current = swr.data;
+    if (current) {
+      const next: UiStateData = {
+        ...current,
+        ...partial,
+        activeTabByProject: {
+          ...current.activeTabByProject,
+          ...(partial.activeTabByProject ?? {}),
+        },
+      };
+      void mutate(UI_STATE_KEY, next, { revalidate: false });
+    }
+    const updated = await fetch(UI_STATE_KEY, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(partial),
+    }).then((r) => r.json() as Promise<UiStateData>);
+    void mutate(UI_STATE_KEY, updated, { revalidate: false });
+  };
+
+  return { ...swr, patchUiState };
+}
+
+// Convenience: set the active project tab without re-typing the merge.
+export async function setProjectTab(
+  patchUiState: (partial: Partial<UiStateData>) => Promise<void>,
+  projectId: string,
+  tab: ProjectTab,
+): Promise<void> {
+  await patchUiState({ activeTabByProject: { [projectId]: tab } });
+}
+
+export async function setManagerTab(
+  patchUiState: (partial: Partial<UiStateData>) => Promise<void>,
+  tab: ManagerTab,
+): Promise<void> {
+  await patchUiState({ activeTabManager: tab });
+}
+
+// ---------------------------------------------------------------------------
+// File editor drafts. Persisted per (projectId, path) so unsaved edits survive
+// reloads and are visible from any tab. Read via a one-shot fetch on file
+// selection (intentionally not SWR — caching + revalidateOnMount would race
+// the open-file initialization and could surface a stale draft on re-select).
+// ---------------------------------------------------------------------------
+export async function fetchFileDraft(
+  projectId: string,
+  path: string,
+): Promise<FileDraftRow | null> {
+  const res = await fetch(
+    `/api/projects/${projectId}/files/draft?path=${encodeURIComponent(path)}`,
+    { cache: "no-store" },
+  );
+  if (!res.ok) return null;
+  return (await res.json()) as FileDraftRow | null;
+}
+
+export async function putFileDraft(
+  projectId: string,
+  path: string,
+  content: string,
+  baseMtime: string,
+): Promise<void> {
+  await fetch(`/api/projects/${projectId}/files/draft`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path, content, baseMtime }),
+  });
+}
+
+export async function deleteFileDraft(projectId: string, path: string): Promise<void> {
+  await fetch(`/api/projects/${projectId}/files/draft`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path }),
+  });
 }

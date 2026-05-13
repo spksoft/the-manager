@@ -2,11 +2,12 @@
 
 import type { SupportedLanguage } from "@the-manager/editor";
 import { MiniEditor } from "@the-manager/editor";
+import type { FileDraftRow } from "@the-manager/persistence";
 import { Button } from "@the-manager/ui";
 import { useEffect, useRef, useState } from "react";
 import { useSWRConfig } from "swr";
 import type { FileEntry } from "../lib/hooks";
-import { useFiles } from "../lib/hooks";
+import { deleteFileDraft, fetchFileDraft, putFileDraft, useFiles } from "../lib/hooks";
 import { ErrorBanner } from "./ErrorBanner";
 
 // ---------------------------------------------------------------------------
@@ -307,6 +308,10 @@ export function FilesTab({ projectId }: FilesTabProps) {
   const [saveErr, setSaveErr] = useState<string | null>(null);
   const [showStaleDialog, setShowStaleDialog] = useState(false);
   const [treeErr, setTreeErr] = useState<string | null>(null);
+  // `undefined` = draft fetch in flight, `null` = no draft on server, row = draft present.
+  // Used together with `fileData` to decide whether to restore the draft when a
+  // file is first opened.
+  const [draftLoaded, setDraftLoaded] = useState<FileDraftRow | null | undefined>(undefined);
 
   const mutateDirs = (dirs: string[]) => {
     const unique = Array.from(new Set(dirs));
@@ -368,27 +373,72 @@ export function FilesTab({ projectId }: FilesTabProps) {
   );
 
   const handleSelect = (path: string) => {
-    const dirty = editorValueRef.current !== savedContentRef.current;
-    if (dirty && selectedPath && path !== selectedPath) {
-      const ok = window.confirm("You have unsaved changes. Discard them and open the other file?");
-      if (!ok) return;
+    if (selectedPath && path !== selectedPath) {
+      // A debounced draft PUT may still be pending against the OLD path. The
+      // server only stores the persisted-to-disk state, so dropping the
+      // pending write isn't a data-loss event — but to keep behavior
+      // intuitive, we always at least flush the current editorValue to the
+      // OLD path's draft before switching, so it can be restored when the
+      // user navigates back.
+      if (savedMtime && editorValueRef.current !== savedContentRef.current) {
+        void putFileDraft(projectId, selectedPath, editorValueRef.current, savedMtime);
+      }
     }
     setSelectedPath(path);
     setSaveErr(null);
     setSavedMtime(undefined);
+    setDraftLoaded(undefined);
   };
 
-  // Sync editor when file data changes
+  // Load draft on selection change. One-shot fetch (not SWR) so re-selecting a
+  // recently-viewed file always reads fresh state.
+  useEffect(() => {
+    if (!selectedPath) {
+      setDraftLoaded(undefined);
+      setEditorValue("");
+      setSavedContent("");
+      setSavedMtime(undefined);
+      return;
+    }
+    let cancelled = false;
+    setDraftLoaded(undefined);
+    void fetchFileDraft(projectId, selectedPath).then((draft) => {
+      if (!cancelled) setDraftLoaded(draft);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedPath, projectId]);
+
+  // Initialization gate: fires once per (selection) when both file data and the
+  // one-shot draft fetch have landed. `savedMtime === undefined` is the
+  // "not yet initialized" sentinel; setting it closes the gate.
   if (
     fileData &&
     fileData.type === "file" &&
     savedMtime === undefined &&
-    fileData.content !== editorValue
+    draftLoaded !== undefined &&
+    selectedPath
   ) {
-    setEditorValue(fileData.content);
+    const useDraft = !!(draftLoaded && draftLoaded.baseMtime === fileData.mtime);
+    setEditorValue(useDraft && draftLoaded ? draftLoaded.content : fileData.content);
     setSavedContent(fileData.content);
     setSavedMtime(fileData.mtime);
+    if (draftLoaded && !useDraft) {
+      // Draft is for an older on-disk version — discard so it can't surface later.
+      void deleteFileDraft(projectId, selectedPath);
+    }
   }
+
+  // Debounced draft persistence on every edit.
+  useEffect(() => {
+    if (!selectedPath || !savedMtime) return;
+    if (editorValue === savedContent) return;
+    const handle = setTimeout(() => {
+      void putFileDraft(projectId, selectedPath, editorValue, savedMtime);
+    }, 400);
+    return () => clearTimeout(handle);
+  }, [editorValue, savedContent, savedMtime, projectId, selectedPath]);
 
   const doSave = async (force = false) => {
     if (!selectedPath) return;
@@ -415,6 +465,8 @@ export function FilesTab({ projectId }: FilesTabProps) {
       const result = (await res.json()) as { mtime: string };
       setSavedMtime(result.mtime);
       setSavedContent(editorValue);
+      // File on disk now matches editor — the draft is redundant.
+      if (selectedPath) void deleteFileDraft(projectId, selectedPath);
       await mutateFile();
     } catch (e) {
       setSaveErr(e instanceof Error ? e.message : String(e));
@@ -454,6 +506,8 @@ export function FilesTab({ projectId }: FilesTabProps) {
 
   const handleReload = async () => {
     setShowStaleDialog(false);
+    // User explicitly chose "discard my edits, use disk content".
+    if (selectedPath) void deleteFileDraft(projectId, selectedPath);
     setSavedMtime(undefined);
     await mutateFile();
     if (fileData?.type === "file") {
@@ -514,7 +568,11 @@ export function FilesTab({ projectId }: FilesTabProps) {
           onMutated={(dirs) => {
             void mutateDirs(dirs);
           }}
-          onSelectionGone={() => {
+          onSelectionGone={(gonePath) => {
+            // The file/dir was renamed or deleted on disk — any draft for it is
+            // now moot and would only confuse a future open of an unrelated
+            // file at the same path.
+            void deleteFileDraft(projectId, gonePath);
             setSelectedPath(null);
             setSavedMtime(undefined);
             setEditorValue("");

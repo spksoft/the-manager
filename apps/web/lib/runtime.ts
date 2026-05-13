@@ -2,10 +2,12 @@ import "server-only";
 import {
   AgentRepo,
   AssetRepo,
+  FileDraftRepo,
   ProjectRepo,
   paths,
   TaskRepo,
   TranscriptRepo,
+  UiStateRepo,
 } from "@the-manager/persistence";
 import type { ProjectId } from "@the-manager/shared";
 import { MANAGER_PROJECT_ID as MANAGER_PROJECT_ID_STR } from "./manager-id";
@@ -24,6 +26,8 @@ export const repos = {
   tasks: new TaskRepo(),
   assets: new AssetRepo(),
   transcript: new TranscriptRepo(),
+  uiState: new UiStateRepo(),
+  fileDrafts: new FileDraftRepo(),
 };
 
 export { paths };
