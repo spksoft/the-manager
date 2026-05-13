@@ -3,6 +3,12 @@ import type { NextConfig } from "next";
 const config: NextConfig = {
   // Self-contained server bundle for the Electron-packaged desktop build.
   output: "standalone",
+  // Dev gets its own build dir so its per-project lock file
+  // (`<distDir>/dev/lock`) doesn't collide with the packaged desktop app's
+  // standalone server running on the prod port — without this, starting
+  // `pnpm dev:web` while the desktop app is open fails with "Another next
+  // dev server is already running" even though the ports differ.
+  distDir: process.env.NODE_ENV === "development" ? ".next-dev" : ".next",
   // Workspace packages ship as TypeScript source; let Next transpile them.
   transpilePackages: [
     "@the-manager/core",
