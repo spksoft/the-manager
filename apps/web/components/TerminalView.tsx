@@ -4,6 +4,7 @@ import { Button } from "@the-manager/ui";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ErrorBanner } from "./ErrorBanner";
 import { MicButton } from "./MicButton";
+import { MobileTerminalKeyBar } from "./MobileTerminalKeyBar";
 
 /**
  * xterm.js touches `self` at module-eval time, which crashes Next's SSR pass.
@@ -35,6 +36,21 @@ export function TerminalView({ projectId }: TerminalViewProps) {
   const [error, setError] = useState<string | null>(null);
   // Bumping this re-runs the connection effect from scratch (spawns fresh).
   const [resetTick, setResetTick] = useState(0);
+
+  // Hoisted so on-screen mobile key buttons can dispatch keystrokes through
+  // the same path as xterm's `onData`. The pty backend treats this body as
+  // raw bytes, so escape sequences like `\x1b[A` arrive identically.
+  const postInput = useCallback(
+    (data: string) =>
+      fetch(`/api/projects/${projectId}/terminal`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "input", data }),
+      }).catch((e: unknown) => {
+        setError(e instanceof Error ? e.message : String(e));
+      }),
+    [projectId],
+  );
 
   // `resetTick` looks unused inside the effect body, but bumping it is exactly
   // the load-bearing signal that the effect should tear down xterm + SSE and
@@ -94,16 +110,6 @@ export function TerminalView({ projectId }: TerminalViewProps) {
       // its banner repeatedly and pegs the request log.
       let lastSentCols = initialCols;
       let lastSentRows = initialRows;
-
-      const postInput = (data: string) =>
-        fetch(`/api/projects/${projectId}/terminal`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ type: "input", data }),
-        }).catch((e: unknown) => {
-          if (ctrl.signal.aborted) return;
-          setError(e instanceof Error ? e.message : String(e));
-        });
 
       const postResize = (cols: number, rows: number) => {
         if (cols === lastSentCols && rows === lastSentRows) return;
@@ -184,7 +190,7 @@ export function TerminalView({ projectId }: TerminalViewProps) {
       ctrl.abort();
       cleanup?.();
     };
-  }, [projectId, resetTick]);
+  }, [projectId, resetTick, postInput]);
 
   const startFresh = useCallback(async () => {
     setError(null);
@@ -230,6 +236,7 @@ export function TerminalView({ projectId }: TerminalViewProps) {
         aria-label="Interactive Claude terminal"
         className="min-h-0 flex-1 overflow-hidden rounded-lg border border-zinc-800 bg-[#0a0a0a] p-1 transition-colors md:p-2"
       />
+      <MobileTerminalKeyBar onKey={postInput} />
       <div className="flex flex-shrink-0 items-center justify-end gap-2">
         <MicButton onResult={handleVoiceInput} />
         <Button

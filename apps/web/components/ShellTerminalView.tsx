@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ErrorBanner } from "./ErrorBanner";
+import { MobileTerminalKeyBar } from "./MobileTerminalKeyBar";
 
 /**
  * Live general-purpose shell session rendered through xterm.js. Mirrors
@@ -29,6 +30,22 @@ interface ShellTerminalViewProps {
 export function ShellTerminalView({ scope, sessionId }: ShellTerminalViewProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Hoisted so the mobile on-screen key bar can dispatch keystrokes through
+  // the same input path as xterm's `onData`. The backend writes the bytes
+  // straight to the pty, so escape sequences (Tab, arrows, Esc) work the
+  // same as a hardware press.
+  const postInput = useCallback(
+    (data: string) =>
+      fetch(`/api/projects/${scope}/terminals/${sessionId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "input", data }),
+      }).catch((e: unknown) => {
+        setError(e instanceof Error ? e.message : String(e));
+      }),
+    [scope, sessionId],
+  );
 
   useEffect(() => {
     const el = containerRef.current;
@@ -75,16 +92,6 @@ export function ShellTerminalView({ scope, sessionId }: ShellTerminalViewProps) 
       const initialRows = term.rows;
       let lastSentCols = initialCols;
       let lastSentRows = initialRows;
-
-      const postInput = (data: string) =>
-        fetch(`/api/projects/${scope}/terminals/${sessionId}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ type: "input", data }),
-        }).catch((e: unknown) => {
-          if (ctrl.signal.aborted) return;
-          setError(e instanceof Error ? e.message : String(e));
-        });
 
       const postResize = (cols: number, rows: number) => {
         if (cols === lastSentCols && rows === lastSentRows) return;
@@ -165,7 +172,7 @@ export function ShellTerminalView({ scope, sessionId }: ShellTerminalViewProps) 
       ctrl.abort();
       cleanup?.();
     };
-  }, [scope, sessionId]);
+  }, [scope, sessionId, postInput]);
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-2">
@@ -176,6 +183,7 @@ export function ShellTerminalView({ scope, sessionId }: ShellTerminalViewProps) 
         aria-label="Interactive shell terminal"
         className="min-h-0 flex-1 overflow-hidden rounded-md border border-zinc-800 bg-[#0a0a0a] p-1 md:p-2"
       />
+      <MobileTerminalKeyBar onKey={postInput} />
     </div>
   );
 }
