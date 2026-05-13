@@ -42,7 +42,7 @@ export function TopBar({
   onOpenSidebar,
 }: TopBarProps) {
   return (
-    <div className="overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900/30">
+    <div className="flex-shrink-0 overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900/30">
       <div className="flex flex-wrap items-center gap-2 px-3 py-2">
         <div className="flex min-w-0 flex-1 items-center gap-2">
           {onOpenSidebar && (
