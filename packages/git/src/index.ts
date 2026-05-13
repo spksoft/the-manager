@@ -522,8 +522,13 @@ export class GitView {
     if (opts.force) args.push("--force-with-lease");
     if (opts.setUpstream) args.push("--set-upstream");
     if (opts.tags) args.push("--tags");
-    if (opts.remote) args.push(opts.remote);
-    if (opts.branch) args.push(opts.branch);
+    // `git push --set-upstream` without a remote/refspec falls back to plain
+    // push and errors when no upstream is configured. Default to origin/HEAD
+    // so first-push of a fresh branch publishes it under its own name.
+    const remote = opts.remote ?? (opts.setUpstream ? "origin" : undefined);
+    const branch = opts.branch ?? (opts.setUpstream ? "HEAD" : undefined);
+    if (remote) args.push(remote);
+    if (branch) args.push(branch);
     await runGitWithProgress(args, {
       cwd: this.cwd,
       onProgress: opts.onProgress,
