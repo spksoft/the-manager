@@ -1,7 +1,12 @@
 import "server-only";
 import type { ProjectId } from "@the-manager/shared";
 import { repos } from "../../../lib/runtime";
-import { listStatuses, readRecentLines, writeInput } from "../../../lib/sessions";
+import {
+  getOrCreateSession,
+  listStatuses,
+  readRecentLines,
+  writeInput,
+} from "../../../lib/sessions";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -62,7 +67,7 @@ const TOOLS = [
   {
     name: "send_to_project",
     description:
-      "Write text to a project's interactive claude terminal as if the user had typed it. Appends Enter automatically. Returns 'sent' on success or an error if the session is not live (the user must open the project's terminal first).",
+      "Write text to a project's interactive claude terminal as if the user had typed it. Appends Enter automatically. Spawns the project's claude session if it isn't already running, so you can delegate without the user having opened that project's terminal first. Returns 'sent' on success.",
     inputSchema: {
       type: "object",
       properties: {
@@ -169,6 +174,17 @@ async function callTool(rawParams: unknown): Promise<ToolResult> {
     case "send_to_project": {
       const id = stringArg(args, "id");
       const text = stringArg(args, "text");
+      // Auto-spawn if the user hasn't opened this project's terminal yet —
+      // delegation shouldn't require the user to pre-click into a tab. The
+      // pty is born at the driver's default size; when the user later opens
+      // the tab the SSE route resizes it to match the rendered xterm.
+      try {
+        await getOrCreateSession(id as ProjectId, 120, 32);
+      } catch (err) {
+        return errorResult(
+          `cannot spawn session for project ${id}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
       // Two writes with a short gap. Claude Code's TUI input uses Ink's paste
       // detection: a multi-char chunk arriving in one read is treated as a
       // paste, so a trailing `\r` becomes a newline in the input buffer rather
@@ -176,9 +192,7 @@ async function callTool(rawParams: unknown): Promise<ToolResult> {
       // as a real Enter keystroke.
       const okText = writeInput(id as ProjectId, text);
       if (!okText) {
-        return errorResult(
-          `no live session for project ${id} — the user must open its terminal first.`,
-        );
+        return errorResult(`failed to write to session for project ${id}.`);
       }
       await new Promise((resolve) => setTimeout(resolve, 80));
       writeInput(id as ProjectId, "\r");

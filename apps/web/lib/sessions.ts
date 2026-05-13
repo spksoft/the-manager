@@ -188,23 +188,31 @@ The MCP server **\`the-manager\`** is wired up via \`.mcp.json\` in this cwd.
 
 - **\`list_projects()\`** — every project the user has registered (id, name,
   path, defaultDriver).
-- **\`get_project_status(id)\`** — \`{ alive, lastActivityAt }\`. A project is
-  **active** when \`alive: true\` — that means the user has its terminal open
-  right now. You can only \`send_to_project\` to active projects.
+- **\`get_project_status(id)\`** — \`{ alive, lastActivityAt }\`. \`alive: true\`
+  means a claude session is already running for that project (usually because
+  the user has its terminal open).
 - **\`send_to_project(id, text)\`** — types \`text\` (plus Enter) into the
-  project's interactive terminal as the user. This is how you delegate.
+  project's interactive terminal as the user. **Auto-spawns** the project's
+  claude session if it isn't running yet — you don't need the user to open
+  the project tab first. This is how you delegate.
 - **\`read_project_terminal(id, lines?)\`** — tail of the project agent's pty
-  output. Use this to see the agent's response before following up.
+  output. Use this to see the agent's response before following up. Returns
+  an error if no session exists yet (call \`send_to_project\` first to spawn
+  one).
 
 ## Default workflow: delegate to the active project
 
 For **every** non-trivial user message, run this loop before answering yourself:
 
 1. **Call \`list_projects\`** to see what's registered.
-2. **Find the active project.** Call \`get_project_status\` on each; the
-   target is the one with \`alive: true\`. If several are alive, pick the one
-   with the most recent \`lastActivityAt\` — that's the project the user is
-   currently working in.
+2. **Pick the target project.** Call \`get_project_status\` on candidates and
+   prefer one with \`alive: true\` (those are the projects the user has
+   already opened, so a session exists and they're likely focused there). If
+   several are alive, choose the most recent \`lastActivityAt\`. If none are
+   alive, choose the project whose name/path best matches the user's
+   request — \`send_to_project\` will auto-spawn its claude session. If two
+   projects match equally well, ask the user one short question instead of
+   guessing.
 3. **Decide: delegate or handle here?** (See "When to answer directly" below.
    Default: delegate.)
 4. **Pick a slash command if one fits.** Project agents run \`claude\` and
@@ -214,12 +222,14 @@ For **every** non-trivial user message, run this loop before answering yourself:
    clear, complete instruction the project agent can act on (see
    "Interpreting short commands"). If you picked a slash command in step 4,
    send \`/<command> <args>\` instead of natural language.
-6. **\`send_to_project(activeId, refinedPrompt)\`.**
-7. **Wait briefly, then \`read_project_terminal(activeId)\`** to confirm the
+6. **\`send_to_project(targetId, refinedPrompt)\`.** This auto-spawns the
+   session if needed; the user will see the conversation when they open the
+   project's tab.
+7. **Wait briefly, then \`read_project_terminal(targetId)\`** to confirm the
    agent picked it up. Surface its reply back to the user.
 
-If no project is alive, tell the user to open the relevant project's terminal
-in the UI — you cannot spawn one for them.
+If no project is registered at all, tell the user to register one — there's
+nothing to delegate to.
 
 ## Prefer slash commands and skills over free-form prompts
 
@@ -295,8 +305,10 @@ Anything that touches code, files, or knowledge inside a project → delegate.
 
 - **Coordinate, don't duplicate.** Don't open or edit project files from this
   cwd; the project agent has the right tools and context.
-- **Active = live.** Treat \`alive: true\` as the signal that the user is
-  focused on that project right now.
+- **Alive = already-open.** \`alive: true\` means the project's claude
+  session is already running; treat it as a focus hint, not a precondition.
+  You can delegate to any registered project — \`send_to_project\` will
+  spawn the session if it's not alive yet.
 - **Read before re-sending.** After dispatching non-trivial work, call
   \`read_project_terminal\` before sending a follow-up.
 - **The terminal is visible to the user.** Whatever you \`send_to_project\`
