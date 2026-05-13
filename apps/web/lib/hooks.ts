@@ -94,6 +94,64 @@ export function useGitFileDiff(id: string | null, path: string | null) {
   return useSWR<GitFileDiff>(key, fetcher);
 }
 
+// Mutation helpers. Each one POSTs to /api/projects/{id}/git and the caller is
+// responsible for revalidating SWR — they all share the `/api/projects/{id}/git`
+// key, so a single mutate after the await refreshes status + log together.
+async function postGitAction(projectId: string, body: object): Promise<unknown> {
+  const res = await fetch(`/api/projects/${projectId}/git`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    let message = `HTTP ${res.status}`;
+    try {
+      const data = (await res.json()) as { message?: string; error?: string };
+      message = data.message ?? data.error ?? message;
+    } catch {
+      // ignore
+    }
+    throw new Error(message);
+  }
+  return res.json();
+}
+
+export function initGit(projectId: string, remoteUrl?: string): Promise<unknown> {
+  return postGitAction(projectId, { action: "init", remoteUrl });
+}
+
+export function stageGitFiles(projectId: string, paths: string[]): Promise<unknown> {
+  return postGitAction(projectId, { action: "stage", paths });
+}
+
+export function unstageGitFiles(projectId: string, paths: string[]): Promise<unknown> {
+  return postGitAction(projectId, { action: "unstage", paths });
+}
+
+export function commitGit(projectId: string, message: string): Promise<{ hash: string }> {
+  return postGitAction(projectId, { action: "commit", message }) as Promise<{ hash: string }>;
+}
+
+export async function generateCommitMessage(
+  projectId: string,
+): Promise<{ message: string; usedFallbackDiff: boolean }> {
+  const res = await fetch(`/api/projects/${projectId}/git/commit-message`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+  });
+  if (!res.ok) {
+    let message = `HTTP ${res.status}`;
+    try {
+      const data = (await res.json()) as { message?: string; error?: string };
+      message = data.message ?? data.error ?? message;
+    } catch {
+      // ignore
+    }
+    throw new Error(message);
+  }
+  return res.json() as Promise<{ message: string; usedFallbackDiff: boolean }>;
+}
+
 // ---------------------------------------------------------------------------
 // Files
 // ---------------------------------------------------------------------------
