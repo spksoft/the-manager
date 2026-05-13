@@ -40,8 +40,12 @@ export const transport = {
   async pickDirectory(): Promise<string | null> {
     const bridge = getBridge();
     if (bridge) return bridge.pickDirectory();
-    // Web fallback: not implemented in Phase 0. The web surface will eventually
-    // accept a typed path instead of a native picker.
-    throw new Error("pickDirectory is only available in the desktop app for now.");
+    // Web surface uses the in-app DirectoryPickerDialog instead — opening that
+    // dialog is React-state and lives in the calling component.
+    return null;
+  },
+
+  hasBridge(): boolean {
+    return getBridge() !== null;
   },
 };

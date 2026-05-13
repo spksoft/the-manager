@@ -4,6 +4,7 @@ import type { ProjectRow } from "@the-manager/persistence";
 import type { DriverId } from "@the-manager/shared";
 import { Button, cn } from "@the-manager/ui";
 import { useEffect, useRef, useState } from "react";
+import { DirectoryPickerDialog } from "./DirectoryPickerDialog";
 import { ErrorBanner } from "./ErrorBanner";
 
 interface NewProjectDialogProps {
@@ -27,6 +28,7 @@ export function NewProjectDialog({ open, onClose, onCreated }: NewProjectDialogP
   const [driver, setDriver] = useState<DriverId>("claude");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [browserOpen, setBrowserOpen] = useState(false);
   const firstFieldRef = useRef<HTMLInputElement>(null);
 
   // Focus first field when opened
@@ -48,10 +50,10 @@ export function NewProjectDialog({ open, onClose, onCreated }: NewProjectDialogP
     if (typeof window !== "undefined" && window.theManager) {
       const dir = await window.theManager.pickDirectory();
       if (dir) setPath(dir);
+      return;
     }
+    setBrowserOpen(true);
   };
-
-  const hasBridge = typeof window !== "undefined" && Boolean(window.theManager);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -143,11 +145,9 @@ export function NewProjectDialog({ open, onClose, onCreated }: NewProjectDialogP
                 placeholder="/home/user/projects/my-project"
                 className="flex-1 rounded-md border border-zinc-800 bg-zinc-900/60 px-3 py-2 font-mono text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-zinc-600 focus:outline-none"
               />
-              {hasBridge && (
-                <Button type="button" variant="ghost" onClick={browse}>
-                  Browse…
-                </Button>
-              )}
+              <Button type="button" variant="ghost" onClick={browse}>
+                Browse…
+              </Button>
             </div>
           </div>
 
@@ -200,6 +200,15 @@ export function NewProjectDialog({ open, onClose, onCreated }: NewProjectDialogP
           </div>
         </form>
       </div>
+      <DirectoryPickerDialog
+        open={browserOpen}
+        initialPath={path}
+        onCancel={() => setBrowserOpen(false)}
+        onPick={(p) => {
+          setPath(p);
+          setBrowserOpen(false);
+        }}
+      />
     </>
   );
 }
