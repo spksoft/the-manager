@@ -21,6 +21,21 @@ const config: NextConfig = {
     "simple-git",
     "write-file-atomic",
   ],
+  // The app is a single-user control plane that the user exposes through
+  // tunnels (ngrok / cloudflare / etc.) when running on a VPS or personal
+  // machine. Tunnel hostnames change every restart, so we list wildcards for
+  // the common providers rather than a literal host. All meaningful state
+  // lives on the server already (see `apps/web/lib/runtime.ts` and the
+  // ui-state / file-drafts repos), so loosening the dev cross-origin guard
+  // here doesn't expose anything beyond what the tunnel itself already does.
+  allowedDevOrigins: [
+    "*",
+    "*.ngrok-free.app",
+    "*.ngrok.io",
+    "*.ngrok.app",
+    "*.trycloudflare.com",
+    "*.loca.lt",
+  ],
 };
 
 export default config;
