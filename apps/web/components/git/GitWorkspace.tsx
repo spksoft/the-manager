@@ -429,7 +429,7 @@ export function GitWorkspace({ projectId }: GitWorkspaceProps) {
 
   return (
     <GitActionsProvider value={actions}>
-      <div className="grid h-full min-h-0 grid-cols-1 gap-2 md:grid-cols-[14rem_minmax(0,1fr)_minmax(0,1fr)] md:gap-3">
+      <div className="grid h-full min-h-0 grid-cols-1 gap-2 md:grid-cols-[14rem_minmax(0,1fr)_minmax(0,1fr)] md:grid-rows-1 md:gap-3">
         {/* Left — fixed sidebar on desktop only; mobile uses a Sheet below */}
         <aside className="hidden min-h-0 overflow-y-auto md:block">
           <Sidebar projectId={projectId} />
@@ -534,8 +534,11 @@ export function GitWorkspace({ projectId }: GitWorkspaceProps) {
           )}
         </section>
 
-        {/* Right — fixed pane on desktop only; mobile uses a bottom Sheet below */}
-        <section className="hidden min-h-0 flex-col gap-3 overflow-y-auto md:flex">
+        {/* Right — fixed pane on desktop only; mobile uses a bottom Sheet below.
+            Plain block (not flex-col): flex children with `overflow-hidden` (rounded
+            corners on the diff viewer) report min-height 0, so a flex parent would
+            shrink them to fit instead of letting them overflow and trigger scroll. */}
+        <section className="hidden min-h-0 space-y-3 overflow-y-auto md:block">
           {detailPaneContent}
         </section>
       </div>

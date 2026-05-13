@@ -84,6 +84,12 @@ function registry(): Map<string, Session> {
 
 const driver = new ClaudeDriver();
 
+function managerMcpPort(): number {
+  const fromEnv = process.env.PORT ? Number(process.env.PORT) : NaN;
+  if (Number.isInteger(fromEnv) && fromEnv > 0) return fromEnv;
+  return process.env.NODE_ENV === "development" ? DEV_PORT : DEFAULT_PORT;
+}
+
 async function resolveCwd(projectId: ProjectId): Promise<string> {
   if (projectId === MANAGER_PROJECT_ID) {
     const cwd = paths.managerCwd();
@@ -113,11 +119,18 @@ async function resolveCwd(projectId: ProjectId): Promise<string> {
  *   4. Strips any stale `mcpServers` entry from `.claude/settings.local.json`
  *      that older versions of this app wrote there by mistake.
  *
- * The bridge URL defaults to `http://localhost:3000/api/mcp`; override via
- * `THE_MANAGER_MCP_URL` (e.g. when the web server runs on a non-default port).
+ * The bridge URL points at this Next.js server's own `/api/mcp` route. Port
+ * resolution mirrors `apps/desktop/main/config.ts`:
+ *   - `THE_MANAGER_MCP_URL` — explicit override (full URL)
+ *   - `PORT` env — set by the packaged desktop when it spawns the embedded
+ *     server (production), and respected by `next start` / `next dev`
+ *   - dev fallback (`NODE_ENV=development`) → 48724
+ *   - prod fallback → 48723
  */
+const DEV_PORT = 48724;
+const DEFAULT_PORT = 48723;
 async function ensureManagerWorkspace(cwd: string): Promise<void> {
-  const url = process.env.THE_MANAGER_MCP_URL ?? "http://localhost:3000/api/mcp";
+  const url = process.env.THE_MANAGER_MCP_URL ?? `http://localhost:${managerMcpPort()}/api/mcp`;
 
   // 1. .mcp.json — merge our entry, keep anything else the user added by hand.
   const mcpFile = join(cwd, ".mcp.json");
