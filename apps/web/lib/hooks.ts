@@ -1,6 +1,15 @@
 "use client";
 
 import type {
+  BranchList,
+  CommitDetails,
+  GraphNode,
+  ProgressEvent,
+  RemoteRow,
+  StashRow,
+  TagRow,
+} from "@the-manager/git";
+import type {
   AssetRow,
   FileDraftRow,
   ManagerTab,
@@ -150,6 +159,291 @@ export async function generateCommitMessage(
     throw new Error(message);
   }
   return res.json() as Promise<{ message: string; usedFallbackDiff: boolean }>;
+}
+
+// ---------------------------------------------------------------------------
+// Git GUI hooks — branches, stash, remotes, tags, graph, commit details
+// ---------------------------------------------------------------------------
+export function useBranches(id: string | null) {
+  return useSWR<BranchList>(id ? `/api/projects/${id}/git/branches` : null, fetcher);
+}
+export function useStashes(id: string | null) {
+  return useSWR<StashRow[]>(id ? `/api/projects/${id}/git/stash` : null, fetcher);
+}
+export function useRemotes(id: string | null) {
+  return useSWR<RemoteRow[]>(id ? `/api/projects/${id}/git/remotes` : null, fetcher);
+}
+export function useTags(id: string | null) {
+  return useSWR<TagRow[]>(id ? `/api/projects/${id}/git/tags` : null, fetcher);
+}
+export function useGraph(id: string | null, max = 500) {
+  return useSWR<{ nodes: GraphNode[] }>(
+    id ? `/api/projects/${id}/git/graph?max=${max}` : null,
+    fetcher,
+  );
+}
+export function useCommit(id: string | null, hash: string | null) {
+  return useSWR<CommitDetails>(
+    id && hash ? `/api/projects/${id}/git/commits/${hash}` : null,
+    fetcher,
+  );
+}
+export function useCommitFileDiff(id: string | null, hash: string | null, path: string | null) {
+  return useSWR<{ hash: string; path: string; diff: string }>(
+    id && hash && path
+      ? `/api/projects/${id}/git/commits/${hash}?path=${encodeURIComponent(path)}`
+      : null,
+    fetcher,
+  );
+}
+
+async function postJson<T>(url: string, body: unknown): Promise<T> {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    let message = `HTTP ${res.status}`;
+    let extra: Record<string, unknown> = {};
+    try {
+      const data = (await res.json()) as Record<string, unknown>;
+      extra = data;
+      message = (data.message as string) ?? (data.error as string) ?? message;
+    } catch {
+      // ignore
+    }
+    const err = new Error(message) as Error & {
+      status: number;
+      code?: string;
+      details?: Record<string, unknown>;
+    };
+    err.status = res.status;
+    err.code = (extra.error as string) ?? undefined;
+    err.details = extra;
+    throw err;
+  }
+  return res.json() as Promise<T>;
+}
+
+// Branch mutations
+export function checkoutBranch(projectId: string, name: string, force = false) {
+  return postJson(`/api/projects/${projectId}/git/branches`, {
+    action: "checkout",
+    name,
+    force,
+  });
+}
+export function createBranch(
+  projectId: string,
+  name: string,
+  opts: { startPoint?: string; checkout?: boolean } = {},
+) {
+  return postJson(`/api/projects/${projectId}/git/branches`, {
+    action: "create",
+    name,
+    startPoint: opts.startPoint,
+    checkout: opts.checkout ?? false,
+  });
+}
+export function renameBranch(projectId: string, from: string, to: string) {
+  return postJson(`/api/projects/${projectId}/git/branches`, { action: "rename", from, to });
+}
+export function deleteBranch(
+  projectId: string,
+  name: string,
+  opts: { force?: boolean; remote?: string } = {},
+) {
+  return postJson(`/api/projects/${projectId}/git/branches`, {
+    action: "delete",
+    name,
+    force: opts.force,
+    remote: opts.remote,
+  });
+}
+export function setBranchUpstream(projectId: string, branch: string, upstream: string) {
+  return postJson(`/api/projects/${projectId}/git/branches`, {
+    action: "set-upstream",
+    branch,
+    upstream,
+  });
+}
+
+// Stash mutations
+export function stashSave(
+  projectId: string,
+  opts: { message?: string; includeUntracked?: boolean } = {},
+) {
+  return postJson(`/api/projects/${projectId}/git/stash`, {
+    action: "save",
+    message: opts.message,
+    includeUntracked: opts.includeUntracked,
+  });
+}
+export function stashApply(projectId: string, index: number, pop = false) {
+  return postJson(`/api/projects/${projectId}/git/stash`, { action: "apply", index, pop });
+}
+export function stashDrop(projectId: string, index: number) {
+  return postJson(`/api/projects/${projectId}/git/stash`, { action: "drop", index });
+}
+
+// Reset / merge
+export function runReset(projectId: string, mode: "soft" | "mixed" | "hard", target: string) {
+  return postJson(`/api/projects/${projectId}/git/reset`, { mode, target });
+}
+export function runMerge(
+  projectId: string,
+  branch: string,
+  opts: { noFastForward?: boolean; squash?: boolean } = {},
+) {
+  return postJson(`/api/projects/${projectId}/git/merge`, { branch, ...opts });
+}
+
+// Hunk staging
+export function stageHunk(projectId: string, patch: string) {
+  return postJson(`/api/projects/${projectId}/git/hunk`, { action: "stage", patch });
+}
+export function unstageHunk(projectId: string, patch: string) {
+  return postJson(`/api/projects/${projectId}/git/hunk`, { action: "unstage", patch });
+}
+
+// Remote ops — POST + SSE response. The standard EventSource can't POST, so
+// we use fetch + ReadableStream and parse SSE lines manually.
+export interface RemoteOpBody {
+  action: "fetch" | "pull" | "push";
+  remote?: string;
+  branch?: string;
+  setUpstream?: boolean;
+  force?: boolean;
+  tags?: boolean;
+  prune?: boolean;
+  rebase?: boolean;
+}
+
+export interface RemoteOpHandlers {
+  onProgress?: (e: ProgressEvent) => void;
+  onDone?: () => void;
+  onError?: (message: string) => void;
+}
+
+export interface RemoteOpHandle {
+  cancel: () => void;
+  /** Resolves when the op terminates (done OR error). Never rejects. */
+  finished: Promise<void>;
+}
+
+export function streamRemoteOp(
+  projectId: string,
+  body: RemoteOpBody,
+  handlers: RemoteOpHandlers,
+): RemoteOpHandle {
+  const ctrl = new AbortController();
+  let resolveFinished!: () => void;
+  const finished = new Promise<void>((res) => {
+    resolveFinished = res;
+  });
+
+  const run = async () => {
+    try {
+      const res = await fetch(`/api/projects/${projectId}/git/remote`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: ctrl.signal,
+      });
+      if (!res.ok || !res.body) {
+        let message = `HTTP ${res.status}`;
+        try {
+          const data = (await res.json()) as { message?: string; error?: string };
+          message = data.message ?? data.error ?? message;
+        } catch {
+          // ignore
+        }
+        handlers.onError?.(message);
+        return;
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      // SSE messages are separated by blank lines; each contains `event: X` + `data: Y`.
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        let nl = buf.indexOf("\n\n");
+        while (nl !== -1) {
+          const msg = buf.slice(0, nl);
+          buf = buf.slice(nl + 2);
+          processMessage(msg, handlers);
+          nl = buf.indexOf("\n\n");
+        }
+      }
+    } catch (err) {
+      if ((err as Error).name === "AbortError") {
+        // user cancelled — not an error path
+      } else {
+        handlers.onError?.((err as Error).message ?? String(err));
+      }
+    } finally {
+      resolveFinished();
+    }
+  };
+  void run();
+
+  return {
+    cancel: () => ctrl.abort(),
+    finished,
+  };
+}
+
+function processMessage(msg: string, handlers: RemoteOpHandlers) {
+  let event = "message";
+  const dataLines: string[] = [];
+  for (const line of msg.split("\n")) {
+    if (line.startsWith("event: ")) event = line.slice(7).trim();
+    else if (line.startsWith("data: ")) dataLines.push(line.slice(6));
+  }
+  const dataStr = dataLines.join("\n");
+  let data: unknown = null;
+  try {
+    data = JSON.parse(dataStr);
+  } catch {
+    // not JSON — leave as null
+  }
+  if (event === "progress" && data && typeof data === "object") {
+    handlers.onProgress?.(data as ProgressEvent);
+  } else if (event === "done") {
+    handlers.onDone?.();
+  } else if (event === "error") {
+    const m = (data as { message?: string } | null)?.message ?? "remote op failed";
+    handlers.onError?.(m);
+  }
+}
+
+// Invalidation helper — call from components after mutations.
+export interface InvalidateKeys {
+  git?: boolean;
+  branches?: boolean;
+  stash?: boolean;
+  graph?: boolean;
+  diff?: string | null;
+  commit?: string | null;
+}
+export function makeGitInvalidator(projectId: string, mutate: (key: string) => Promise<unknown>) {
+  return (keys: InvalidateKeys = {}) => {
+    const promises: Promise<unknown>[] = [];
+    if (keys.git !== false) promises.push(mutate(`/api/projects/${projectId}/git`));
+    if (keys.branches) promises.push(mutate(`/api/projects/${projectId}/git/branches`));
+    if (keys.stash) promises.push(mutate(`/api/projects/${projectId}/git/stash`));
+    if (keys.graph) promises.push(mutate(`/api/projects/${projectId}/git/graph?max=500`));
+    if (keys.diff) {
+      promises.push(mutate(`/api/projects/${projectId}/git?diff=${encodeURIComponent(keys.diff)}`));
+    }
+    if (keys.commit) {
+      promises.push(mutate(`/api/projects/${projectId}/git/commits/${keys.commit}`));
+    }
+    return Promise.all(promises);
+  };
 }
 
 // ---------------------------------------------------------------------------

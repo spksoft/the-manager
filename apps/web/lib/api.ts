@@ -1,5 +1,11 @@
 import "server-only";
-import { NotFoundError, TheManagerError, ValidationError } from "@the-manager/shared";
+import {
+  DirtyWorkingTreeError,
+  MergeConflictError,
+  NotFoundError,
+  TheManagerError,
+  ValidationError,
+} from "@the-manager/shared";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
@@ -19,6 +25,18 @@ export function jsonErr(status: number, code: string, message: string): Response
 export function handleErr(err: unknown): Response {
   if (err instanceof NotFoundError) return jsonErr(404, err.code, err.message);
   if (err instanceof ValidationError) return jsonErr(400, err.code, err.message);
+  if (err instanceof DirtyWorkingTreeError) {
+    return NextResponse.json(
+      { error: err.code, message: err.message, dirty: err.dirty },
+      { status: 409 },
+    );
+  }
+  if (err instanceof MergeConflictError) {
+    return NextResponse.json(
+      { error: err.code, message: err.message, conflicted: err.conflicted },
+      { status: 409 },
+    );
+  }
   if (err instanceof z.ZodError) {
     const flat = err.issues.map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`).join("; ");
     return jsonErr(400, "VALIDATION", flat);

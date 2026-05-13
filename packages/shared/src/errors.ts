@@ -27,3 +27,21 @@ export class ValidationError extends TheManagerError {
     this.name = "ValidationError";
   }
 }
+
+export class DirtyWorkingTreeError extends TheManagerError {
+  readonly dirty: { path: string; index: string; working_dir: string }[];
+  constructor(dirty: { path: string; index: string; working_dir: string }[]) {
+    super("DIRTY_TREE", "working tree has uncommitted changes");
+    this.name = "DirtyWorkingTreeError";
+    this.dirty = dirty;
+  }
+}
+
+export class MergeConflictError extends TheManagerError {
+  readonly conflicted: string[];
+  constructor(conflicted: string[]) {
+    super("MERGE_CONFLICT", "merge produced conflicts");
+    this.name = "MergeConflictError";
+    this.conflicted = conflicted;
+  }
+}
