@@ -13,14 +13,18 @@
     "dev:desktop": "turbo run dev --parallel --filter=@the-manager/desktop --filter=@the-manager/web",
     "build": "turbo run build",
     "start": "turbo run start --filter=@the-manager/web",
+    "dmg": "pnpm --filter @the-manager/desktop dmg",
+    "dist": "pnpm --filter @the-manager/desktop dist",
     "typecheck": "turbo run typecheck",
     "lint": "biome check .",
     "format": "biome format --write .",
     "smoke": "node scripts/smoke-api.mjs",
-    "smoke:persistence": "tsx packages/persistence/scripts/smoke.mjs"
+    "smoke:persistence": "tsx packages/persistence/scripts/smoke.mjs",
+    "prepare": "husky"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.15",
+    "husky": "^9.1.7",
     "turbo": "^2.9.0",
     "typescript": "^5.7.0"
   }

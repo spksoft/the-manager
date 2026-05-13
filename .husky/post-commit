@@ -1,0 +1,2 @@
+#!/usr/bin/env sh
+node ./scripts/hooks/post-commit-build.mjs
