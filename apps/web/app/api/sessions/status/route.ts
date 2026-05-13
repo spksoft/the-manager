@@ -7,11 +7,10 @@ export const runtime = "nodejs";
 
 /**
  * GET /api/sessions/status
- * Returns `{ statuses: { [projectId]: { alive, lastActivityAt } } }` for every
- * known session. Polled by the sidebar to render liveness dots.
- *
- * "Needs human input" detection is deliberately not here yet — it requires
- * parsing the claude TUI for prompt patterns and is intentionally deferred.
+ * Returns `{ statuses: { [projectId]: { alive, lastActivityAt, readyAt } } }`
+ * for every known session. Polled by the sidebar to render liveness dots and
+ * by the notification bell to detect working → idle transitions (readyAt
+ * bumps).
  */
 export async function GET() {
   try {

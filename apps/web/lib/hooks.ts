@@ -121,6 +121,8 @@ export function useAssetFolders() {
 export interface SessionStatus {
   alive: boolean;
   lastActivityAt: string | null;
+  /** Bumped each time the agent transitions from working back to idle. */
+  readyAt: string | null;
 }
 
 export function useSessionStatuses() {

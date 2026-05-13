@@ -35,15 +35,35 @@ export interface Session {
   exited: boolean;
   /** ISO timestamp of the most recent stdout chunk, or session start if none yet. */
   lastActivityAt: string;
+  /**
+   * "working" once the user has submitted (Enter) and the agent is producing
+   * output; "idle" while waiting for the user. Transitions working → idle bump
+   * `readyAt` so the UI can surface a "ready / needs input" notification.
+   */
+  state: "idle" | "working";
+  /** Bumped each time the agent transitions from working to idle. */
+  readyAt: string | null;
+  /** Pending timeout that flips state back to idle after a quiet period. */
+  idleTimer: NodeJS.Timeout | null;
 }
 
 export interface SessionStatus {
   alive: boolean;
   lastActivityAt: string | null;
+  /** Bumped on each working → idle transition; the UI uses this to fire a notification. */
+  readyAt: string | null;
 }
 
 /** Cap the in-memory recording so a very chatty session doesn't grow forever. */
 const MAX_RECORDING_BYTES = 1_000_000;
+
+/**
+ * How long the pty has to stay quiet after the agent was last producing output
+ * before we declare it "idle / ready for input". 2s is long enough that brief
+ * pauses mid-response don't fire false notifications, short enough to feel
+ * responsive when the agent actually finishes.
+ */
+const IDLE_QUIET_MS = 2_000;
 
 const REG_KEY = "__the_manager_sessions__";
 type RegistryGlobal = typeof globalThis & { [REG_KEY]?: Map<string, Session> };
@@ -250,6 +270,17 @@ for notes and intermediate files tied to orchestration. Project work goes
 through the project agents.
 `;
 
+function scheduleIdleCheck(session: Session): void {
+  if (session.idleTimer) clearTimeout(session.idleTimer);
+  session.idleTimer = setTimeout(() => {
+    session.idleTimer = null;
+    if (session.exited) return;
+    if (session.state !== "working") return;
+    session.state = "idle";
+    session.readyAt = new Date().toISOString();
+  }, IDLE_QUIET_MS);
+}
+
 async function createSession(projectId: ProjectId, cols: number, rows: number): Promise<Session> {
   const cwd = await resolveCwd(projectId);
   const handle = driver.spawn({ cwd, pty: { cols, rows } });
@@ -263,6 +294,9 @@ async function createSession(projectId: ProjectId, cols: number, rows: number): 
     rows,
     exited: false,
     lastActivityAt: new Date().toISOString(),
+    state: "idle",
+    readyAt: null,
+    idleTimer: null,
   };
 
   handle.on("data", ({ chunk }) => {
@@ -274,10 +308,15 @@ async function createSession(projectId: ProjectId, cols: number, rows: number): 
       if (dropped) session.recordingBytes -= dropped.length;
     }
     for (const sub of session.dataSubs) sub(chunk);
+    if (session.state === "working") scheduleIdleCheck(session);
   });
 
   handle.on("exit", () => {
     session.exited = true;
+    if (session.idleTimer) {
+      clearTimeout(session.idleTimer);
+      session.idleTimer = null;
+    }
     const tombstone = "\r\n\x1b[2m[claude exited]\x1b[0m\r\n";
     for (const sub of session.dataSubs) sub(tombstone);
     for (const sub of session.exitSubs) sub();
@@ -323,6 +362,13 @@ export function writeInput(projectId: ProjectId, data: string): boolean {
   const s = getSession(projectId);
   if (!s) return false;
   s.handle.write(data);
+  // Only Enter actually submits work to claude. Plain keystrokes (typing,
+  // arrows, paste before Enter) shouldn't flip the agent into "working" — the
+  // user is still composing.
+  if (data.includes("\r") || data.includes("\n")) {
+    s.state = "working";
+    scheduleIdleCheck(s);
+  }
   return true;
 }
 
@@ -366,6 +412,7 @@ export function listStatuses(): Record<string, SessionStatus> {
     out[projectId] = {
       alive: !s.exited,
       lastActivityAt: s.lastActivityAt,
+      readyAt: s.readyAt,
     };
   }
   return out;

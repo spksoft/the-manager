@@ -18,50 +18,97 @@ interface Notification {
   projectId: string;
   /** Short user-facing text shown in the row. */
   message: string;
-  /** Reserved for "needs input" later; currently always "exited". */
-  kind: "exited";
+  kind: "exited" | "ready";
 }
 
 const MAX_NOTIFICATIONS = 20;
 
 /**
- * Header bell. Watches `useSessionStatuses` for alive → dead transitions and
- * surfaces them as toasts in a dropdown. Click a row → jump the active view
- * to that project (or to the Manager). Architected so "needs human input"
- * can be added later as another `kind`.
+ * Header bell. Watches `useSessionStatuses` for two kinds of transitions:
+ *   - alive → dead (kind "exited")
+ *   - readyAt bumps, i.e. the agent went from working back to idle, meaning it
+ *     either finished its response or is now waiting on the user (kind "ready")
+ *
+ * Each notification shows in the bell dropdown and — when the user has granted
+ * permission — also fires a Web Notification so the user gets pinged even when
+ * the tab is backgrounded. Click a row → jump the active view to that project.
  */
 export function NotificationsBell({ projects, onJump }: NotificationsBellProps) {
   const { data } = useSessionStatuses();
   const [items, setItems] = useState<Notification[]>([]);
   const [open, setOpen] = useState(false);
   const prevAliveRef = useRef<Record<string, boolean>>({});
+  const prevReadyAtRef = useRef<Record<string, string | null>>({});
+  /** True once we've seen the first poll; suppresses spurious notifications
+   * on initial mount when prev refs are empty. */
+  const initializedRef = useRef(false);
+
+  // Request OS notification permission once on mount. We don't block on the
+  // result — if the user denies (or the API is unavailable, e.g. in Electron's
+  // older shells) we silently fall back to bell-only.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (typeof Notification === "undefined") return;
+    if (Notification.permission === "default") {
+      void Notification.requestPermission().catch(() => {
+        /* user dismissed the prompt — fine, we degrade to bell-only */
+      });
+    }
+  }, []);
 
   useEffect(() => {
-    const statuses = data?.statuses ?? {};
-    const prev = prevAliveRef.current;
-    const next: Record<string, boolean> = {};
+    if (!data?.statuses) return;
+    const statuses = data.statuses;
+    const prevAlive = prevAliveRef.current;
+    const prevReadyAt = prevReadyAtRef.current;
+    const nextAlive: Record<string, boolean> = {};
+    const nextReadyAt: Record<string, string | null> = {};
     const fresh: Notification[] = [];
-    for (const pid of new Set([...Object.keys(prev), ...Object.keys(statuses)])) {
-      const alive = statuses[pid]?.alive ?? false;
-      next[pid] = alive;
-      const wasAlive = prev[pid] === true;
-      if (wasAlive && !alive) {
-        const name =
-          pid === MANAGER_PROJECT_ID
-            ? "Manager"
-            : (projects.find((p) => p.id === pid)?.name ?? pid.slice(0, 8));
+    const wasInitialized = initializedRef.current;
+
+    for (const pid of new Set([...Object.keys(prevAlive), ...Object.keys(statuses)])) {
+      const status = statuses[pid];
+      const alive = status?.alive ?? false;
+      const readyAt = status?.readyAt ?? null;
+      nextAlive[pid] = alive;
+      nextReadyAt[pid] = readyAt;
+      if (!wasInitialized) continue;
+
+      const name =
+        pid === MANAGER_PROJECT_ID
+          ? "Manager"
+          : (projects.find((p) => p.id === pid)?.name ?? pid.slice(0, 8));
+
+      // alive → dead transition
+      if (prevAlive[pid] === true && !alive) {
         fresh.push({
-          id: `${pid}-${Date.now()}`,
+          id: `${pid}-exit-${Date.now()}`,
           ts: new Date().toISOString(),
           projectId: pid,
           message: `${name} session exited`,
           kind: "exited",
         });
       }
+
+      // working → idle transition (readyAt bumped to a new value)
+      if (readyAt && readyAt !== prevReadyAt[pid]) {
+        fresh.push({
+          id: `${pid}-ready-${readyAt}`,
+          ts: readyAt,
+          projectId: pid,
+          message: `${name} is ready for input`,
+          kind: "ready",
+        });
+      }
     }
-    prevAliveRef.current = next;
+
+    prevAliveRef.current = nextAlive;
+    prevReadyAtRef.current = nextReadyAt;
+    initializedRef.current = true;
+
     if (fresh.length > 0) {
       setItems((existing) => [...fresh, ...existing].slice(0, MAX_NOTIFICATIONS));
+      fireOsNotifications(fresh);
     }
   }, [data, projects]);
 
@@ -158,6 +205,21 @@ export function NotificationsBell({ projects, onJump }: NotificationsBellProps) 
       )}
     </div>
   );
+}
+
+function fireOsNotifications(items: Notification[]): void {
+  if (typeof window === "undefined") return;
+  if (typeof Notification === "undefined") return;
+  if (Notification.permission !== "granted") return;
+  for (const n of items) {
+    try {
+      // `tag` collapses repeated notifications for the same event (the id is
+      // already deduped) so we don't stack identical OS toasts.
+      new Notification("The Manager", { body: n.message, tag: n.id });
+    } catch {
+      /* some platforms throw on construction — degrade silently */
+    }
+  }
 }
 
 function relativeTime(iso: string): string {
