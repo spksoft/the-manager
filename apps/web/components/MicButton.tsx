@@ -46,16 +46,70 @@ function getSRCtor(): SRCtor | null {
   );
 }
 
+const AUTO_TRANSLATE_KEY = "tm.stt.autoTranslateEn";
+
 export function MicButton({ onResult }: MicButtonProps) {
   const [lang, setLang] = useState<Lang>("en-US");
   const [listening, setListening] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [interim, setInterim] = useState("");
+  const [autoTranslate, setAutoTranslate] = useState(false);
+  const [translating, setTranslating] = useState(false);
   const recRef = useRef<SR | null>(null);
   const onResultRef = useRef(onResult);
   useEffect(() => {
     onResultRef.current = onResult;
   }, [onResult]);
+
+  // Persist auto-translate toggle across sessions so the user doesn't have to
+  // re-enable it every reload.
+  useEffect(() => {
+    try {
+      setAutoTranslate(localStorage.getItem(AUTO_TRANSLATE_KEY) === "1");
+    } catch {
+      /* localStorage blocked — fall back to default off */
+    }
+  }, []);
+  const toggleAutoTranslate = useCallback(() => {
+    setAutoTranslate((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem(AUTO_TRANSLATE_KEY, next ? "1" : "0");
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  }, []);
+  const autoTranslateRef = useRef(autoTranslate);
+  useEffect(() => {
+    autoTranslateRef.current = autoTranslate;
+  }, [autoTranslate]);
+
+  const emitResult = useCallback(async (raw: string) => {
+    if (!autoTranslateRef.current) {
+      onResultRef.current(raw);
+      return;
+    }
+    setTranslating(true);
+    try {
+      const res = await fetch("/api/stt/translate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: raw }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = (await res.json()) as { text?: string };
+      const translated = (json.text ?? "").trim();
+      onResultRef.current(translated.length > 0 ? translated : raw);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      // Fall back to the original transcript so the user's voice still lands.
+      onResultRef.current(raw);
+    } finally {
+      setTranslating(false);
+    }
+  }, []);
 
   // Build / rebuild the recogniser whenever the language changes. Recogniser
   // state is closure-trapped, so we attach handlers fresh.
@@ -82,7 +136,7 @@ export function MicButton({ onResult }: MicButtonProps) {
         else inter += transcript;
       }
       setInterim(inter);
-      if (final.trim().length > 0) onResultRef.current(final.trim());
+      if (final.trim().length > 0) void emitResult(final.trim());
     };
     rec.onerror = (e) => {
       const code = (e as { error?: string }).error ?? "speech-recognition error";
@@ -103,7 +157,7 @@ export function MicButton({ onResult }: MicButtonProps) {
       }
       recRef.current = null;
     };
-  }, [lang]);
+  }, [lang, emitResult]);
 
   const supported = typeof window !== "undefined" && getSRCtor() !== null;
 
@@ -154,6 +208,24 @@ export function MicButton({ onResult }: MicButtonProps) {
       </button>
       <button
         type="button"
+        onClick={toggleAutoTranslate}
+        aria-pressed={autoTranslate}
+        title={
+          autoTranslate
+            ? "Auto-translate to English is ON — recognised text is sent through claude -p before submission"
+            : "Auto-translate to English is OFF — recognised text is sent as-is"
+        }
+        aria-label={`Auto-translate to English ${autoTranslate ? "on" : "off"}`}
+        className={`rounded-md border px-2 py-1 text-[10px] font-semibold uppercase tracking-wider transition-colors ${
+          autoTranslate
+            ? "border-emerald-500/60 bg-emerald-500/15 text-emerald-300"
+            : "border-zinc-800 bg-zinc-900/40 text-zinc-400 hover:text-zinc-200"
+        }`}
+      >
+        →EN
+      </button>
+      <button
+        type="button"
         onClick={toggle}
         aria-pressed={listening}
         aria-label={listening ? "Stop speaking" : "Start speaking"}
@@ -169,6 +241,7 @@ export function MicButton({ onResult }: MicButtonProps) {
       {interim && (
         <span className="max-w-[160px] truncate text-[11px] italic text-zinc-500">{interim}</span>
       )}
+      {translating && <span className="text-[11px] italic text-emerald-400">translating…</span>}
       {error && <span className="text-[11px] text-red-400">{error}</span>}
     </div>
   );
