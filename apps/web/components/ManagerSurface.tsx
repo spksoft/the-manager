@@ -9,9 +9,9 @@ import { TerminalView } from "./TerminalView";
 /**
  * The Manager surface mirrors `ProjectWorkspace`'s tab layout, just with a
  * smaller tab set. The Files tab points at the Manager's private cwd
- * (`~/.the-manager/manager/cwd`), which is where the auto-written `CLAUDE.md`,
- * `.mcp.json`, and any scratch notes live — so the user can read/edit those
- * without leaving the app.
+ * (`~/.the-manager/manager/cwd`), which is where the auto-written `CLAUDE.md`
+ * and `.mcp.json` live alongside the user-owned `USER_INSTRUCTION.md` and
+ * `SOUL.md` — so the user can read/edit those without leaving the app.
  */
 type Tab = "agent" | "files";
 

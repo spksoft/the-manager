@@ -68,17 +68,20 @@ async function resolveCwd(projectId: ProjectId): Promise<string> {
 
 /**
  * One-stop bootstrap for the Manager's cwd. Idempotent — safe to call on
- * every Manager spawn. Performs three things:
+ * every Manager spawn. Performs:
  *
  *   1. Writes / merges `.mcp.json` so Claude Code's MCP client connects to our
  *      in-process bridge (`/api/mcp`). Project-scoped MCP config lives in
  *      `.mcp.json`, NOT `.claude/settings.local.json` (the latter has a
  *      different schema and silently ignores `mcpServers`).
- *   2. Writes `CLAUDE.md` if absent — this is the operating brief Claude reads
- *      on startup. Tells the Manager what it is, which MCP tools it has, and
- *      how to coordinate across projects. We never overwrite an existing
- *      CLAUDE.md so the user is free to customise.
- *   3. Strips any stale `mcpServers` entry from `.claude/settings.local.json`
+ *   2. Overwrites `CLAUDE.md` on every spawn — this is the operating brief
+ *      Claude reads on startup, and it's system-managed so updates to the
+ *      brief land in existing manager workspaces. User customisation goes in
+ *      `USER_INSTRUCTION.md` / `SOUL.md` instead, both of which `CLAUDE.md`
+ *      points the Manager at.
+ *   3. Writes `USER_INSTRUCTION.md` and `SOUL.md` if absent (empty files).
+ *      These are user-owned — never overwritten once they exist.
+ *   4. Strips any stale `mcpServers` entry from `.claude/settings.local.json`
  *      that older versions of this app wrote there by mistake.
  *
  * The bridge URL defaults to `http://localhost:3000/api/mcp`; override via
@@ -102,21 +105,21 @@ async function ensureManagerWorkspace(cwd: string): Promise<void> {
   existing.mcpServers = servers;
   await writeFile(mcpFile, `${JSON.stringify(existing, null, 2)}\n`, "utf8");
 
-  // 2. CLAUDE.md — operating brief for the Manager agent. Only write if missing
-  // so user edits survive.
-  const claudeMdFile = join(cwd, "CLAUDE.md");
-  let claudeMdExists = false;
-  try {
-    await readFile(claudeMdFile, "utf8");
-    claudeMdExists = true;
-  } catch {
-    /* not present — we'll write it */
-  }
-  if (!claudeMdExists) {
-    await writeFile(claudeMdFile, MANAGER_CLAUDE_MD, "utf8");
+  // 2. CLAUDE.md — system-managed brief, always rewritten so users get updates.
+  await writeFile(join(cwd, "CLAUDE.md"), MANAGER_CLAUDE_MD, "utf8");
+
+  // 3. USER_INSTRUCTION.md / SOUL.md — user-owned. Create empty if missing;
+  // never overwrite.
+  for (const name of ["USER_INSTRUCTION.md", "SOUL.md"]) {
+    const file = join(cwd, name);
+    try {
+      await readFile(file, "utf8");
+    } catch {
+      await writeFile(file, "", "utf8");
+    }
   }
 
-  // 3. Strip the misplaced mcpServers entry from any old settings.local.json.
+  // 4. Strip the misplaced mcpServers entry from any old settings.local.json.
   const staleFile = join(cwd, ".claude", "settings.local.json");
   try {
     const raw = await readFile(staleFile, "utf8");
@@ -142,6 +145,22 @@ coordinates other Claude Code sessions across the user's registered projects.
 **Your default is to delegate.** Each project has its own agent with the right
 cwd, tools, and context — your job is to route work to that agent, not to do
 the work yourself from this cwd.
+
+## User-owned configuration (read these on startup)
+
+Two sibling files in this cwd are owned by the user, not the system — they
+are written empty on first run and never overwritten. Read both before
+acting on the first user message of a session and treat them as overrides
+to anything in this file:
+
+- **\`USER_INSTRUCTION.md\`** — the user's standing instructions for how
+  you should behave (delegation preferences, tone, workflows, projects to
+  favour, etc.). If a directive here conflicts with this brief, the user
+  wins.
+- **\`SOUL.md\`** — the user's description of your personality / voice /
+  values. Adopt it. If empty, use the default neutral, concise tone.
+
+If either file is empty, just proceed with the defaults below.
 
 ## Tools you have here
 
