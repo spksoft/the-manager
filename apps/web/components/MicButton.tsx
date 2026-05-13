@@ -47,6 +47,7 @@ function getSRCtor(): SRCtor | null {
 }
 
 const AUTO_TRANSLATE_KEY = "tm.stt.autoTranslateEn";
+const LANG_KEY = "tm.stt.lang";
 
 export function MicButton({ onResult }: MicButtonProps) {
   const [lang, setLang] = useState<Lang>("en-US");
@@ -56,19 +57,33 @@ export function MicButton({ onResult }: MicButtonProps) {
   const [autoTranslate, setAutoTranslate] = useState(false);
   const [translating, setTranslating] = useState(false);
   const recRef = useRef<SR | null>(null);
+  const pttActiveRef = useRef(false);
   const onResultRef = useRef(onResult);
   useEffect(() => {
     onResultRef.current = onResult;
   }, [onResult]);
 
-  // Persist auto-translate toggle across sessions so the user doesn't have to
-  // re-enable it every reload.
+  // Persist mic settings (language + auto-translate) across sessions so the
+  // user doesn't have to re-pick them every reload.
   useEffect(() => {
     try {
       setAutoTranslate(localStorage.getItem(AUTO_TRANSLATE_KEY) === "1");
+      const savedLang = localStorage.getItem(LANG_KEY);
+      if (savedLang === "en-US" || savedLang === "th-TH") setLang(savedLang);
     } catch {
-      /* localStorage blocked — fall back to default off */
+      /* localStorage blocked — fall back to defaults */
     }
+  }, []);
+  const toggleLang = useCallback(() => {
+    setLang((l) => {
+      const next: Lang = l === "en-US" ? "th-TH" : "en-US";
+      try {
+        localStorage.setItem(LANG_KEY, next);
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
   }, []);
   const toggleAutoTranslate = useCallback(() => {
     setAutoTranslate((prev) => {
@@ -142,11 +157,24 @@ export function MicButton({ onResult }: MicButtonProps) {
       const code = (e as { error?: string }).error ?? "speech-recognition error";
       // `no-speech` and `aborted` are routine cancellations — don't show as errors.
       if (code !== "no-speech" && code !== "aborted") setError(code);
-      setListening(false);
+      // Defer the listening-off state to onend so push-to-talk can restart
+      // without flickering the UI between utterances.
     };
     rec.onend = () => {
-      setListening(false);
       setInterim("");
+      // Push-to-talk: as long as the user is still holding Ctrl+M, restart the
+      // recogniser. Web Speech runs in single-utterance mode (continuous=false)
+      // so it auto-stops on each pause — without this, holding the keys would
+      // only capture the first utterance.
+      if (pttActiveRef.current) {
+        try {
+          rec.start();
+          return;
+        } catch {
+          /* restart failed — fall through and surface as stopped */
+        }
+      }
+      setListening(false);
     };
     recRef.current = rec;
     return () => {
@@ -199,7 +227,6 @@ export function MicButton({ onResult }: MicButtonProps) {
   // window level so it works even when xterm has focus. NOTE: terminals
   // interpret Ctrl+M as carriage return — capturing it here means that exact
   // combo no longer reaches the pty, but the Enter key still does.
-  const pttActiveRef = useRef(false);
   useEffect(() => {
     if (!supported) return;
     const isM = (e: KeyboardEvent) =>
@@ -251,7 +278,7 @@ export function MicButton({ onResult }: MicButtonProps) {
     <div className="flex items-center gap-1.5">
       <button
         type="button"
-        onClick={() => setLang((l) => (l === "en-US" ? "th-TH" : "en-US"))}
+        onClick={toggleLang}
         title={`Recognition language (${lang}) — click to toggle`}
         aria-label={`Toggle language, currently ${lang}`}
         className="rounded-md border border-zinc-800 bg-zinc-900/40 px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-400 transition-colors hover:text-zinc-200"
