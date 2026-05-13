@@ -54,10 +54,20 @@ export function TerminalView({ projectId }: TerminalViewProps) {
       ]);
       if (ctrl.signal.aborted) return;
 
+      // Pick a font size from the current viewport width. Narrow phones get a
+      // smaller cell so claude's TUI lays out at usable column counts; the
+      // ResizeObserver below re-evaluates this when the container changes.
+      const pickFontSize = () => {
+        const w = window.innerWidth;
+        if (w < 640) return 11;
+        if (w < 768) return 12;
+        return 13;
+      };
+
       const term = new Terminal({
         cursorBlink: true,
         fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, "Courier New", monospace',
-        fontSize: 13,
+        fontSize: pickFontSize(),
         theme: { background: "#0a0a0a", foreground: "#e4e4e7" },
         scrollback: 5000,
         convertEol: false,
@@ -116,6 +126,10 @@ export function TerminalView({ projectId }: TerminalViewProps) {
       const ro = new ResizeObserver(() => {
         if (resizeTimer) clearTimeout(resizeTimer);
         resizeTimer = setTimeout(() => {
+          const nextFont = pickFontSize();
+          if (term.options.fontSize !== nextFont) {
+            term.options.fontSize = nextFont;
+          }
           try {
             fit.fit();
           } catch {
@@ -214,7 +228,7 @@ export function TerminalView({ projectId }: TerminalViewProps) {
         ref={containerRef}
         role="application"
         aria-label="Interactive Claude terminal"
-        className="min-h-0 flex-1 overflow-hidden rounded-lg border border-zinc-800 bg-[#0a0a0a] p-2 transition-colors"
+        className="min-h-0 flex-1 overflow-hidden rounded-lg border border-zinc-800 bg-[#0a0a0a] p-1 transition-colors md:p-2"
       />
       <div className="flex flex-shrink-0 items-center justify-end gap-2">
         <MicButton onResult={handleVoiceInput} />

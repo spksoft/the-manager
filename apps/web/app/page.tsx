@@ -1,6 +1,7 @@
 "use client";
 
 import type { ProjectRow } from "@the-manager/persistence";
+import { Sheet } from "@the-manager/ui";
 import { useEffect, useMemo, useState } from "react";
 import { useSWRConfig } from "swr";
 import { AssetBrowser } from "../components/AssetBrowser";
@@ -25,6 +26,7 @@ export default function HomePage() {
   const [newProjectOpen, setNewProjectOpen] = useState(false);
   const [editingProject, setEditingProject] = useState<ProjectRow | null>(null);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const { data: projects = [], mutate: mutateProjects } = useProjects();
 
@@ -38,6 +40,16 @@ export default function HomePage() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
+  }, []);
+
+  // If the viewport grows past the md breakpoint, the persistent sidebar takes
+  // over — close the mobile sheet so backdrop/scroll-lock don't linger.
+  useEffect(() => {
+    const mq = window.matchMedia("(min-width: 768px)");
+    const handle = () => mq.matches && setSidebarOpen(false);
+    handle();
+    mq.addEventListener("change", handle);
+    return () => mq.removeEventListener("change", handle);
   }, []);
 
   const headerTitle = useMemo(() => {
@@ -60,48 +72,69 @@ export default function HomePage() {
     return "";
   }, [activeView, projects]);
 
+  const sidebarProps = {
+    projects,
+    activeView,
+    onSelectManager: () => setActiveView({ type: "manager" }),
+    onSelectProject: (id: string) => setActiveView({ type: "project", id }),
+    onSelectAssets: () => setActiveView({ type: "assets" }),
+    onAddProject: () => setNewProjectOpen(true),
+    onEditProject: (project: ProjectRow) => setEditingProject(project),
+    onRemoveProject: async (id: string, name: string) => {
+      if (
+        !window.confirm(
+          `Remove project "${name}" from The Manager?\n\nThis only forgets the registration; nothing on disk is deleted.`,
+        )
+      ) {
+        return;
+      }
+      await fetch(`/api/projects/${id}`, { method: "DELETE" });
+      void mutateProjects(projects.filter((p) => p.id !== id));
+      // Server's DELETE handler also clears any ui-state pointing at this
+      // project; revalidate so the activeView reflects that.
+      void swrMutate("/api/ui-state");
+    },
+    onOpenSettings: () => setSettingsOpen(true),
+  };
+
   return (
     <div className="flex h-screen overflow-hidden">
-      <Sidebar
-        projects={projects}
-        activeView={activeView}
-        onSelectManager={() => setActiveView({ type: "manager" })}
-        onSelectProject={(id) => setActiveView({ type: "project", id })}
-        onSelectAssets={() => setActiveView({ type: "assets" })}
-        onAddProject={() => setNewProjectOpen(true)}
-        onEditProject={(project) => setEditingProject(project)}
-        onRemoveProject={async (id, name) => {
-          if (
-            !window.confirm(
-              `Remove project "${name}" from The Manager?\n\nThis only forgets the registration; nothing on disk is deleted.`,
-            )
-          ) {
-            return;
-          }
-          await fetch(`/api/projects/${id}`, { method: "DELETE" });
-          void mutateProjects(projects.filter((p) => p.id !== id));
-          // Server's DELETE handler also clears any ui-state pointing at this
-          // project; revalidate so the activeView reflects that.
-          void swrMutate("/api/ui-state");
-        }}
-        onOpenSettings={() => setSettingsOpen(true)}
-      />
+      <Sidebar {...sidebarProps} />
+      <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen} side="left" ariaLabel="Navigation">
+        <Sidebar {...sidebarProps} variant="drawer" onNavigate={() => setSidebarOpen(false)} />
+      </Sheet>
 
       <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        <header className="flex flex-shrink-0 items-center justify-between border-b border-zinc-800 px-8 py-5">
-          <div>
-            <h1 className="text-xl font-semibold tracking-tight text-zinc-50">{headerTitle}</h1>
-            {headerSub && <p className="mt-0.5 text-sm text-zinc-500">{headerSub}</p>}
+        <header className="flex flex-shrink-0 items-center justify-between gap-2 border-b border-zinc-800 px-3 py-3 md:px-8 md:py-5">
+          <div className="flex min-w-0 items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setSidebarOpen(true)}
+              aria-label="Open navigation"
+              className="-ml-1 flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-md text-zinc-300 hover:bg-zinc-800/60 md:hidden"
+            >
+              <span aria-hidden className="text-lg leading-none">
+                ☰
+              </span>
+            </button>
+            <div className="min-w-0">
+              <h1 className="truncate text-base font-semibold tracking-tight text-zinc-50 md:text-xl">
+                {headerTitle}
+              </h1>
+              {headerSub && (
+                <p className="mt-0.5 hidden truncate text-sm text-zinc-500 md:block">{headerSub}</p>
+              )}
+            </div>
           </div>
-          <div className="flex items-center gap-3 text-xs text-zinc-500">
-            <span>
+          <div className="flex flex-shrink-0 items-center gap-3 text-xs text-zinc-500">
+            <span className="hidden sm:inline">
               {projects.length} project{projects.length !== 1 ? "s" : ""}
             </span>
             <NotificationsBell projects={projects} onJump={(target) => setActiveView(target)} />
           </div>
         </header>
 
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-8 py-6">
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-3 py-3 md:px-8 md:py-6">
           {activeView.type === "manager" && <ManagerSurface />}
           {activeView.type === "assets" && <AssetBrowser />}
           {activeView.type === "project" && <ProjectWorkspace projectId={activeView.id} />}

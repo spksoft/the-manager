@@ -44,6 +44,12 @@ interface SidebarProps {
   onEditProject: (project: ProjectRow) => void;
   onRemoveProject: (id: string, name: string) => void;
   onOpenSettings: () => void;
+  /** When rendered inside a mobile drawer, the page lifts navigation so it
+   * can close the drawer on selection. Desktop callers leave this undefined. */
+  onNavigate?: () => void;
+  /** "drawer" drops the fixed `w-60` / `h-screen` so the sheet wrapper drives
+   * layout. Defaults to the existing desktop column. */
+  variant?: "column" | "drawer";
 }
 
 export function Sidebar({
@@ -56,6 +62,8 @@ export function Sidebar({
   onEditProject,
   onRemoveProject,
   onOpenSettings,
+  onNavigate,
+  variant = "column",
 }: SidebarProps) {
   const managerActive = activeView.type === "manager";
   const assetsActive = activeView.type === "assets";
@@ -64,8 +72,19 @@ export function Sidebar({
   const managerStatus = statuses[MANAGER_PROJECT_ID];
   const managerDot = statusColor(managerStatus);
 
+  const select = (fn: () => void) => () => {
+    fn();
+    onNavigate?.();
+  };
+
   return (
-    <aside className="flex h-screen w-60 flex-shrink-0 flex-col border-r border-zinc-800 bg-zinc-950/40">
+    <aside
+      className={
+        variant === "drawer"
+          ? "flex h-full w-full flex-col bg-zinc-950"
+          : "hidden h-screen w-60 flex-shrink-0 flex-col border-r border-zinc-800 bg-zinc-950/40 md:flex"
+      }
+    >
       <div className="flex h-12 items-center gap-2 border-b border-zinc-800 px-4">
         <span className="inline-block h-2 w-2 rounded-full bg-emerald-400" />
         <span className="text-sm font-semibold tracking-tight text-zinc-100">The Manager</span>
@@ -88,7 +107,7 @@ export function Sidebar({
             </span>
           }
           active={managerActive}
-          onClick={onSelectManager}
+          onClick={select(onSelectManager)}
         />
       </div>
 
@@ -157,7 +176,7 @@ export function Sidebar({
                   )
                 }
                 active={activeView.type === "project" && activeView.id === p.id}
-                onClick={() => onSelectProject(p.id)}
+                onClick={select(() => onSelectProject(p.id))}
                 hoverAction={
                   <span className="flex items-center gap-0.5">
                     <button
@@ -196,13 +215,17 @@ export function Sidebar({
             label="Assets"
             icon={<span aria-hidden>▣</span>}
             active={assetsActive}
-            onClick={onSelectAssets}
+            onClick={select(onSelectAssets)}
           />
         </div>
       </div>
 
       <div className="border-t border-zinc-800 p-2">
-        <SidebarItem label="Settings" icon={<span aria-hidden>⚙</span>} onClick={onOpenSettings} />
+        <SidebarItem
+          label="Settings"
+          icon={<span aria-hidden>⚙</span>}
+          onClick={select(onOpenSettings)}
+        />
       </div>
     </aside>
   );

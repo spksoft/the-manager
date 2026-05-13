@@ -23,7 +23,7 @@ export function SidebarItem({
   return (
     <div
       className={cn(
-        "group flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors",
+        "group flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm transition-colors md:py-1.5",
         active
           ? "bg-zinc-800/80 text-zinc-50"
           : "text-zinc-400 hover:bg-zinc-900 hover:text-zinc-100",
@@ -40,7 +40,7 @@ export function SidebarItem({
         <span className="flex-1 truncate">{label}</span>
       </button>
       {hoverAction && (
-        <span className="flex-shrink-0 opacity-0 transition-opacity group-hover:opacity-100">
+        <span className="flex-shrink-0 transition-opacity md:opacity-0 md:group-hover:opacity-100">
           {hoverAction}
         </span>
       )}

@@ -33,7 +33,7 @@ export function ProjectWorkspace({ projectId }: ProjectWorkspaceProps) {
       <div
         role="tablist"
         aria-label="Project workspace tabs"
-        className="flex gap-1 border-b border-zinc-800 px-1 pt-1"
+        className="flex flex-shrink-0 gap-1 overflow-x-auto border-b border-zinc-800 px-1 pt-1"
       >
         {TABS.map((t) => (
           <button
@@ -43,7 +43,7 @@ export function ProjectWorkspace({ projectId }: ProjectWorkspaceProps) {
             aria-selected={activeTab === t.id}
             onClick={() => void setProjectTab(patchUiState, projectId, t.id)}
             className={cn(
-              "rounded-t-md px-4 py-2 text-sm font-medium transition-colors",
+              "flex-shrink-0 rounded-t-md px-3 py-2 text-sm font-medium transition-colors md:px-4",
               activeTab === t.id
                 ? "border-b-2 border-emerald-400 text-zinc-100"
                 : "text-zinc-500 hover:text-zinc-200",
@@ -55,7 +55,7 @@ export function ProjectWorkspace({ projectId }: ProjectWorkspaceProps) {
       </div>
 
       {/* Tab content */}
-      <div className="min-h-0 flex-1 overflow-hidden p-4">
+      <div className="min-h-0 flex-1 overflow-hidden p-2 md:p-4">
         {activeTab === "agent" && <TerminalView projectId={projectId} />}
         {activeTab === "files" && <FilesTab projectId={projectId} />}
         {activeTab === "git" && <GitTab projectId={projectId} />}

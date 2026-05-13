@@ -3,7 +3,7 @@
 import type { SupportedLanguage } from "@the-manager/editor";
 import { MiniEditor } from "@the-manager/editor";
 import type { FileDraftRow } from "@the-manager/persistence";
-import { Button } from "@the-manager/ui";
+import { Button, Sheet } from "@the-manager/ui";
 import { useEffect, useRef, useState } from "react";
 import { useSWRConfig } from "swr";
 import type { FileEntry } from "../lib/hooks";
@@ -167,7 +167,7 @@ function FileTreeEntry({
             <span aria-hidden>{expanded ? "▾" : "▸"}</span>
             <span className="font-medium">{entry.name}/</span>
           </button>
-          <span className="flex items-center opacity-0 transition-opacity group-hover:opacity-100">
+          <span className="flex items-center transition-opacity md:opacity-0 md:group-hover:opacity-100">
             <button
               type="button"
               onClick={rename}
@@ -265,7 +265,7 @@ function StaleDialog({ onReload, onSaveAnyway, onClose }: StaleDialogProps) {
         role="dialog"
         aria-modal="true"
         aria-labelledby="stale-dialog-title"
-        className="animate-scale-in fixed left-1/2 top-1/2 z-50 w-full max-w-sm -translate-x-1/2 -translate-y-1/2 rounded-xl border border-zinc-800 bg-zinc-950 shadow-2xl"
+        className="animate-scale-in fixed left-1/2 top-1/2 z-50 w-[calc(100vw-1.5rem)] max-w-sm -translate-x-1/2 -translate-y-1/2 rounded-xl border border-zinc-800 bg-zinc-950 shadow-2xl"
       >
         <div className="p-5">
           <h2 id="stale-dialog-title" className="mb-2 text-sm font-semibold text-zinc-100">
@@ -275,7 +275,7 @@ function StaleDialog({ onReload, onSaveAnyway, onClose }: StaleDialogProps) {
             The file was modified since you opened it. Reload to discard your changes, or save
             anyway to overwrite.
           </p>
-          <div className="flex justify-end gap-2">
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
             <Button type="button" variant="ghost" onClick={onClose}>
               Cancel
             </Button>
@@ -312,6 +312,7 @@ export function FilesTab({ projectId }: FilesTabProps) {
   // Used together with `fileData` to decide whether to restore the draft when a
   // file is first opened.
   const [draftLoaded, setDraftLoaded] = useState<FileDraftRow | null | undefined>(undefined);
+  const [treeOpen, setTreeOpen] = useState(false);
 
   const mutateDirs = (dirs: string[]) => {
     const unique = Array.from(new Set(dirs));
@@ -518,52 +519,56 @@ export function FilesTab({ projectId }: FilesTabProps) {
   };
   const dirty = editorValue !== savedContent;
 
-  return (
-    <div className="flex h-full gap-3">
-      {/* File tree pane */}
-      <div className="flex w-52 flex-shrink-0 flex-col overflow-y-auto rounded-lg border border-zinc-800 bg-zinc-900/30 py-2">
-        <div className="flex items-center justify-between px-3 pb-1">
-          <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
-            Files
-          </span>
-          <span className="flex items-center gap-0.5">
-            <button
-              type="button"
-              onClick={newFile}
-              aria-label="New file"
-              title="New file"
-              className="rounded p-0.5 text-zinc-500 hover:text-zinc-200"
-            >
-              ＋
-            </button>
-            <button
-              type="button"
-              onClick={newFolder}
-              aria-label="New folder"
-              title="New folder"
-              className="rounded p-0.5 text-zinc-500 hover:text-zinc-200"
-            >
-              📁
-            </button>
-          </span>
+  const handleSelectAndClose = (path: string) => {
+    handleSelect(path);
+    setTreeOpen(false);
+  };
+
+  const treePane = (
+    <>
+      <div className="flex items-center justify-between px-3 pb-1 pt-1">
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+          Files
+        </span>
+        <span className="flex items-center gap-0.5">
+          <button
+            type="button"
+            onClick={newFile}
+            aria-label="New file"
+            title="New file"
+            className="rounded p-1.5 text-zinc-500 hover:text-zinc-200 md:p-0.5"
+          >
+            ＋
+          </button>
+          <button
+            type="button"
+            onClick={newFolder}
+            aria-label="New folder"
+            title="New folder"
+            className="rounded p-1.5 text-zinc-500 hover:text-zinc-200 md:p-0.5"
+          >
+            📁
+          </button>
+        </span>
+      </div>
+      {treeErr && (
+        <div className="mx-2 mb-1 rounded border border-red-900/60 bg-red-950/30 px-2 py-1 text-[11px] text-red-300">
+          {treeErr}
+          <button
+            type="button"
+            onClick={() => setTreeErr(null)}
+            aria-label="Dismiss error"
+            className="ml-1 text-red-400/70 hover:text-red-200"
+          >
+            ✕
+          </button>
         </div>
-        {treeErr && (
-          <div className="mx-2 mb-1 rounded border border-red-900/60 bg-red-950/30 px-2 py-1 text-[11px] text-red-300">
-            {treeErr}
-            <button
-              type="button"
-              onClick={() => setTreeErr(null)}
-              aria-label="Dismiss error"
-              className="ml-1 text-red-400/70 hover:text-red-200"
-            >
-              ✕
-            </button>
-          </div>
-        )}
+      )}
+      <div className="min-h-0 flex-1 overflow-y-auto">
         <FileTree
           projectId={projectId}
           dirPath=""
-          onSelect={handleSelect}
+          onSelect={handleSelectAndClose}
           selectedPath={selectedPath}
           onMutated={(dirs) => {
             void mutateDirs(dirs);
@@ -580,14 +585,35 @@ export function FilesTab({ projectId }: FilesTabProps) {
           }}
         />
       </div>
+    </>
+  );
+
+  return (
+    <div className="flex h-full gap-3">
+      {/* File tree pane — visible on md+, collapsed into Sheet on mobile */}
+      <div className="hidden w-52 flex-shrink-0 flex-col overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900/30 py-1 md:flex">
+        {treePane}
+      </div>
+
+      <Sheet open={treeOpen} onOpenChange={setTreeOpen} side="left" ariaLabel="File tree">
+        <div className="flex h-full flex-col">{treePane}</div>
+      </Sheet>
 
       {/* Editor pane */}
       <div className="flex min-w-0 flex-1 flex-col gap-2">
         {saveErr && <ErrorBanner message={saveErr} onDismiss={() => setSaveErr(null)} />}
-        {selectedPath ? (
-          <>
-            <div className="flex flex-shrink-0 items-center justify-between gap-2">
-              <span className="font-mono text-xs text-zinc-400">
+        <div className="flex flex-shrink-0 items-center justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setTreeOpen(true)}
+              aria-label="Open file tree"
+              className="flex h-8 items-center gap-1 rounded-md border border-zinc-800 px-2 text-xs text-zinc-300 hover:bg-zinc-800/60 md:hidden"
+            >
+              <span aria-hidden>☰</span> Files
+            </button>
+            {selectedPath ? (
+              <span className="min-w-0 truncate font-mono text-xs text-zinc-400">
                 {selectedPath}
                 {dirty && (
                   <span role="img" aria-label="Unsaved changes" className="ml-1 text-amber-400">
@@ -595,30 +621,37 @@ export function FilesTab({ projectId }: FilesTabProps) {
                   </span>
                 )}
               </span>
-              <Button
-                onClick={() => doSave(false)}
-                disabled={saving || !fileData || !dirty}
-                aria-label="Save file (Cmd+S)"
-                title="⌘S"
-              >
-                {saving ? "Saving…" : "Save"}
-              </Button>
+            ) : (
+              <span className="hidden text-xs text-zinc-600 md:inline">No file open</span>
+            )}
+          </div>
+          {selectedPath && (
+            <Button
+              onClick={() => doSave(false)}
+              disabled={saving || !fileData || !dirty}
+              aria-label="Save file (Cmd+S)"
+              title="⌘S"
+            >
+              {saving ? "Saving…" : "Save"}
+            </Button>
+          )}
+        </div>
+        {selectedPath ? (
+          <div className="relative min-h-0 flex-1 overflow-hidden rounded-lg border border-zinc-800">
+            {/* absolute inset-0 gives CodeMirror a strictly-sized container; without it, height="100%" can collapse to 0 inside the flex chain and content overflows silently. */}
+            <div className="absolute inset-0">
+              <MiniEditor
+                value={editorValue}
+                language={detectLanguage(selectedPath.split("/").pop() ?? "")}
+                onChange={setEditorValue}
+                height="100%"
+              />
             </div>
-            <div className="relative min-h-0 flex-1 overflow-hidden rounded-lg border border-zinc-800">
-              {/* absolute inset-0 gives CodeMirror a strictly-sized container; without it, height="100%" can collapse to 0 inside the flex chain and content overflows silently. */}
-              <div className="absolute inset-0">
-                <MiniEditor
-                  value={editorValue}
-                  language={detectLanguage(selectedPath.split("/").pop() ?? "")}
-                  onChange={setEditorValue}
-                  height="100%"
-                />
-              </div>
-            </div>
-          </>
+          </div>
         ) : (
-          <div className="flex flex-1 items-center justify-center rounded-lg border border-dashed border-zinc-800 text-sm text-zinc-600">
-            Select a file to edit
+          <div className="flex flex-1 items-center justify-center rounded-lg border border-dashed border-zinc-800 px-4 text-center text-sm text-zinc-600">
+            <span className="md:hidden">Tap "Files" to pick something to edit</span>
+            <span className="hidden md:inline">Select a file to edit</span>
           </div>
         )}
       </div>

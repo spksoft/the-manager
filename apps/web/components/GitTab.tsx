@@ -79,8 +79,12 @@ export function GitTab({ projectId }: GitTabProps) {
                   aria-label={`Toggle diff for ${f.path}`}
                 >
                   <StatusCode index={f.index} working={f.working_dir} />
-                  <span className="flex-1 font-mono text-xs text-zinc-300">{f.path}</span>
-                  <span className="text-[10px] text-zinc-600">{selected ? "▾" : "▸"}</span>
+                  <span className="min-w-0 flex-1 truncate font-mono text-xs text-zinc-300">
+                    {f.path}
+                  </span>
+                  <span className="flex-shrink-0 text-[10px] text-zinc-600">
+                    {selected ? "▾" : "▸"}
+                  </span>
                 </button>
               );
             })}
@@ -121,16 +125,20 @@ export function GitTab({ projectId }: GitTabProps) {
             {log.slice(0, 20).map((entry) => (
               <div
                 key={entry.hash}
-                className="flex items-baseline gap-3 border-b border-zinc-900 px-3 py-1.5 last:border-0"
+                className="flex items-baseline gap-2 border-b border-zinc-900 px-3 py-1.5 last:border-0 md:gap-3"
               >
                 <span className="w-14 flex-shrink-0 font-mono text-[11px] text-zinc-500">
                   {entry.hash.slice(0, 7)}
                 </span>
-                <span className="w-28 flex-shrink-0 text-[11px] text-zinc-500">
+                <span className="hidden w-28 flex-shrink-0 text-[11px] text-zinc-500 md:inline">
                   {shortDate(entry.date)}
                 </span>
-                <span className="flex-1 truncate text-xs text-zinc-200">{entry.message}</span>
-                <span className="flex-shrink-0 text-[11px] text-zinc-500">{entry.author}</span>
+                <span className="min-w-0 flex-1 truncate text-xs text-zinc-200">
+                  {entry.message}
+                </span>
+                <span className="hidden flex-shrink-0 text-[11px] text-zinc-500 md:inline">
+                  {entry.author}
+                </span>
               </div>
             ))}
           </div>

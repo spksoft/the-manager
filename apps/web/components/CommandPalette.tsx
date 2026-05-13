@@ -30,7 +30,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
         role="dialog"
         aria-modal="true"
         aria-labelledby="command-palette-title"
-        className="fixed left-1/2 top-[20vh] z-50 w-full max-w-lg -translate-x-1/2 rounded-xl border border-zinc-700 bg-zinc-900 shadow-2xl"
+        className="fixed left-1/2 top-[10vh] z-50 w-[calc(100vw-1.5rem)] max-w-lg -translate-x-1/2 rounded-xl border border-zinc-700 bg-zinc-900 shadow-2xl md:top-[20vh]"
       >
         <div className="flex items-center gap-3 border-b border-zinc-800 px-4 py-3">
           <span className="text-zinc-500" aria-hidden>

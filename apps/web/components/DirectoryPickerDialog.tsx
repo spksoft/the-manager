@@ -93,7 +93,7 @@ export function DirectoryPickerDialog({
         role="dialog"
         aria-modal="true"
         aria-labelledby="dir-picker-title"
-        className="animate-scale-in fixed left-1/2 top-1/2 z-[70] flex h-[32rem] w-full max-w-xl -translate-x-1/2 -translate-y-1/2 flex-col rounded-xl border border-zinc-800 bg-zinc-950 shadow-2xl"
+        className="animate-scale-in fixed inset-x-2 inset-y-4 z-[70] flex flex-col rounded-xl border border-zinc-800 bg-zinc-950 shadow-2xl md:inset-auto md:left-1/2 md:top-1/2 md:h-[32rem] md:w-full md:max-w-xl md:-translate-x-1/2 md:-translate-y-1/2"
       >
         <header className="flex items-center justify-between border-b border-zinc-800 px-5 py-4">
           <h2 id="dir-picker-title" className="text-base font-semibold text-zinc-100">

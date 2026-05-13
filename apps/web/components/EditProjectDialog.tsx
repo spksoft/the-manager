@@ -113,7 +113,7 @@ export function EditProjectDialog({ open, project, onClose, onUpdated }: EditPro
         role="dialog"
         aria-modal="true"
         aria-labelledby="edit-project-title"
-        className="animate-scale-in fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-xl border border-zinc-800 bg-zinc-950 shadow-2xl"
+        className="animate-scale-in fixed left-1/2 top-1/2 z-50 max-h-[calc(100vh-2rem)] w-[calc(100vw-1.5rem)] max-w-md -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-xl border border-zinc-800 bg-zinc-950 shadow-2xl"
       >
         <header className="flex items-center justify-between border-b border-zinc-800 px-5 py-4">
           <h2 id="edit-project-title" className="text-base font-semibold text-zinc-100">
@@ -129,7 +129,7 @@ export function EditProjectDialog({ open, project, onClose, onUpdated }: EditPro
           </button>
         </header>
 
-        <form onSubmit={submit} className="flex flex-col gap-4 px-5 py-5">
+        <form onSubmit={submit} className="flex flex-col gap-4 p-4 md:p-5">
           {error && <ErrorBanner message={error} onDismiss={() => setError(null)} />}
 
           <div className="flex flex-col gap-1.5">
@@ -206,7 +206,7 @@ export function EditProjectDialog({ open, project, onClose, onUpdated }: EditPro
             </div>
           </div>
 
-          <div className="flex justify-end gap-2 pt-2">
+          <div className="flex flex-col-reverse gap-2 pt-2 sm:flex-row sm:justify-end">
             <Button type="button" variant="ghost" onClick={onClose} disabled={submitting}>
               Cancel
             </Button>
