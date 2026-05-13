@@ -7,17 +7,39 @@ files:
   - assets/**/*
   - package.json
 extraResources:
-  # In Phase 2 we'll add the prebuilt apps/web here so startEmbeddedServer can find it.
-  # - from: "../web/.next"
-  #   to: "web/.next"
+  # Next.js standalone server. Split into two entries because electron-builder's
+  # default file filter strips top-level `node_modules` from extraResources;
+  # naming the subdir explicitly bypasses that filter. Layout in the bundle:
+  #   Contents/Resources/web/apps/web/server.js   (entry point)
+  #   Contents/Resources/web/node_modules/.pnpm/  (hoisted deps via symlinks)
+  - from: "../web/.next/standalone/apps"
+    to: "web/apps"
+  - from: "../web/.next/standalone/node_modules"
+    to: "web/node_modules"
+    # pnpm hoists workspace-package convenience symlinks here. They aren't
+    # required at runtime (workspace packages are inlined into Next chunks via
+    # transpilePackages), and following them dereferences the *source* tree
+    # into the bundle — which on a second build means copying release/ into
+    # itself recursively until codesign chokes.
+    filter:
+      - "**/*"
+      - "!**/.pnpm/node_modules/@the-manager/**"
+  # Static chunks live outside the standalone tree; reunite them at runtime.
+  - from: "../web/.next/static"
+    to: "web/apps/web/.next/static"
 mac:
   category: public.app-category.developer-tools
   icon: assets/icon.png
+  # Declare the whole bundle as a UI element (menubar utility). This hides
+  # both the main process AND any Electron-as-Node child processes from the
+  # Dock — `app.dock.hide()` only covers the parent, so without LSUIElement
+  # the spawned embedded-server process shows up as a separate "exec" entry.
+  extendInfo:
+    LSUIElement: true
   target:
     - target: dmg
       arch:
         - arm64
-        - x64
 dmg:
   artifactName: ${productName}-${version}-${arch}.dmg
 linux:

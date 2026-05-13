@@ -33,12 +33,11 @@ export function setupTray(options: TrayOptions): Tray {
   if (process.platform === "darwin") image.setTemplateImage(true);
   tray = new Tray(image);
   tray.setToolTip("The Manager");
-  tray.on("click", () => {
-    const win = options.getMainWindow();
-    if (!win) return;
-    if (win.isVisible()) win.focus();
-    else win.show();
-  });
+  // No explicit click handler: macOS opens the context menu on a single click
+  // once `setContextMenu` is set. Adding a custom click handler that calls
+  // `win.show()` here would force the window to reappear every time the user
+  // touches the tray — surprising and unwanted. The menu's "Show Window" item
+  // is the explicit way to bring the window back.
   rebuildTrayMenu();
   return tray;
 }

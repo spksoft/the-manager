@@ -68,16 +68,24 @@ async function pickPort(): Promise<number> {
 }
 
 async function spawnChild(port: number): Promise<void> {
-  const webDir = join(process.resourcesPath, "web");
-  child = spawn(
-    process.execPath,
-    ["node_modules/next/dist/bin/next", "start", "-p", String(port)],
-    {
-      cwd: webDir,
-      env: { ...process.env, NODE_ENV: "production" },
-      stdio: "inherit",
+  // Standalone output for a monorepo lives at <root>/apps/web/server.js, with
+  // node_modules hoisted to <root>/. extraResources maps that root to "web/"
+  // inside the bundle, so the runtime cwd ends up at .../web/apps/web/.
+  const webDir = join(process.resourcesPath, "web", "apps", "web");
+  child = spawn(process.execPath, [join(webDir, "server.js")], {
+    cwd: webDir,
+    env: {
+      ...process.env,
+      NODE_ENV: "production",
+      // process.execPath is the Electron binary in a packaged build; this
+      // env var makes it act as Node instead of opening another window.
+      ELECTRON_RUN_AS_NODE: "1",
+      // Next.js standalone reads PORT/HOSTNAME from env, not flags.
+      PORT: String(port),
+      HOSTNAME: "127.0.0.1",
     },
-  );
+    stdio: "inherit",
+  });
 
   child.on("exit", (code) => {
     if (code !== 0 && code !== null) {

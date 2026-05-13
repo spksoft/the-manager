@@ -6,10 +6,12 @@
   "scripts": {
     "dev": "pnpm build && electron .",
     "build": "tsc -p tsconfig.main.json && tsc -p tsconfig.preload.json",
+    "build:web": "pnpm --filter @the-manager/web build",
+    "clean:release": "rm -rf release ../web/.next/standalone",
     "start": "electron .",
-    "package": "pnpm build && electron-builder --dir",
-    "dmg": "pnpm build && electron-builder --mac dmg",
-    "dist": "pnpm build && electron-builder",
+    "package": "pnpm clean:release && pnpm build:web && pnpm build && electron-builder --dir",
+    "dmg": "pnpm clean:release && pnpm build:web && pnpm build && electron-builder --mac dmg",
+    "dist": "pnpm clean:release && pnpm build:web && pnpm build && electron-builder",
     "typecheck": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.preload.json --noEmit"
   },
   "dependencies": {
