@@ -85,6 +85,16 @@ export const AssetsIndexSchema = z.object({
   folders: z.array(z.string()),
 });
 
+export const NotificationSeveritySchema = z.enum(["info", "attention", "urgent"]);
+export type NotificationSeverity = z.infer<typeof NotificationSeveritySchema>;
+
+export const NotificationMuteEntrySchema = z.object({
+  projectId: z.string(),
+  /** ISO timestamp, or the sentinel "forever". */
+  until: z.union([z.string().datetime(), z.literal("forever")]),
+});
+export type NotificationMuteEntry = z.infer<typeof NotificationMuteEntrySchema>;
+
 export const SettingsSchema = z.object({
   version: z.literal(1),
   data: z.object({
@@ -106,6 +116,14 @@ export const SettingsSchema = z.object({
       // stable across launches). Range matches the IPv4 user/ephemeral range
       // that doesn't require elevated permissions.
       preferredPort: z.number().int().min(1024).max(65535).nullable(),
+    }),
+    notifications: z.object({
+      /** Master switch for OS-level toasts. Bell dropdown is unaffected. */
+      osToasts: z.boolean(),
+      /** Lowest severity that fires an OS toast (info < attention < urgent). */
+      threshold: NotificationSeveritySchema,
+      /** Per-project mute table. Urgent events bypass mute by design. */
+      mutedProjects: z.array(NotificationMuteEntrySchema),
     }),
   }),
 });

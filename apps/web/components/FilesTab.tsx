@@ -1,13 +1,20 @@
 "use client";
 
-import type { SupportedLanguage } from "@the-manager/editor";
-import { MiniEditor } from "@the-manager/editor";
+import { detectLanguage, MiniEditor } from "@the-manager/editor";
 import type { FileDraftRow } from "@the-manager/persistence";
 import { Button, Sheet } from "@the-manager/ui";
+import { ChevronDown, ChevronRight, FilePlus, FolderPlus, Search, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useSWRConfig } from "swr";
-import type { FileEntry } from "../lib/hooks";
-import { deleteFileDraft, fetchFileDraft, putFileDraft, useFiles } from "../lib/hooks";
+import { fileIcon, folderIcon } from "../lib/file-icons";
+import type { FileEntry, FileSearchMode } from "../lib/hooks";
+import {
+  deleteFileDraft,
+  fetchFileDraft,
+  putFileDraft,
+  useFileSearch,
+  useFiles,
+} from "../lib/hooks";
 import { ErrorBanner } from "./ErrorBanner";
 
 // ---------------------------------------------------------------------------
@@ -22,16 +29,9 @@ function filesKey(projectId: string, dirPath: string): string {
   return `/api/projects/${projectId}/files?path=${encodeURIComponent(dirPath)}`;
 }
 
-// ---------------------------------------------------------------------------
-// Language detection
-// ---------------------------------------------------------------------------
-function detectLanguage(filename: string): SupportedLanguage {
-  const ext = filename.split(".").pop()?.toLowerCase() ?? "";
-  if (ext === "ts" || ext === "tsx") return "typescript";
-  if (ext === "js" || ext === "jsx" || ext === "mjs" || ext === "cjs") return "javascript";
-  if (ext === "json") return "json";
-  if (ext === "md" || ext === "mdx") return "markdown";
-  return "plaintext";
+function basename(path: string): string {
+  const idx = path.lastIndexOf("/");
+  return idx === -1 ? path : path.slice(idx + 1);
 }
 
 // ---------------------------------------------------------------------------
@@ -155,6 +155,7 @@ function FileTreeEntry({
   };
 
   if (entry.type === "dir") {
+    const folder = folderIcon(expanded);
     return (
       <li className="group">
         <div className="flex items-center gap-0.5">
@@ -164,8 +165,13 @@ function FileTreeEntry({
             aria-expanded={expanded}
             className="flex flex-1 items-center gap-1 rounded px-1.5 py-0.5 text-left text-xs text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200"
           >
-            <span aria-hidden>{expanded ? "▾" : "▸"}</span>
-            <span className="font-medium">{entry.name}/</span>
+            {expanded ? (
+              <ChevronDown size={12} className="shrink-0 text-zinc-500" aria-hidden />
+            ) : (
+              <ChevronRight size={12} className="shrink-0 text-zinc-500" aria-hidden />
+            )}
+            <folder.Icon size={14} className={`shrink-0 ${folder.className}`} aria-hidden />
+            <span className="truncate font-medium">{entry.name}</span>
           </button>
           <span className="flex items-center transition-opacity md:opacity-0 md:group-hover:opacity-100">
             <button
@@ -202,6 +208,7 @@ function FileTreeEntry({
     );
   }
 
+  const icon = fileIcon(entry.name);
   return (
     <li className="group">
       <div className="flex items-center gap-0.5">
@@ -214,10 +221,9 @@ function FileTreeEntry({
               : "text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200"
           }`}
         >
-          <span aria-hidden className="text-zinc-600">
-            —
-          </span>
-          {entry.name}
+          <span className="w-3 shrink-0" aria-hidden />
+          <icon.Icon size={14} className={`shrink-0 ${icon.className}`} aria-hidden />
+          <span className="truncate">{entry.name}</span>
         </button>
         <span className="flex items-center opacity-0 transition-opacity group-hover:opacity-100">
           <button
@@ -293,6 +299,91 @@ function StaleDialog({ onReload, onSaveAnyway, onClose }: StaleDialogProps) {
 }
 
 // ---------------------------------------------------------------------------
+// SearchResults
+// ---------------------------------------------------------------------------
+interface SearchResultsProps {
+  query: string;
+  mode: FileSearchMode;
+  data: import("../lib/hooks").FileSearchResponse | undefined;
+  isLoading: boolean;
+  error: Error | undefined;
+  onSelect: (path: string, line?: number) => void;
+}
+
+function SearchResults({ query, mode, data, isLoading, error, onSelect }: SearchResultsProps) {
+  if (error) {
+    return <div className="pl-3 text-xs text-red-400">{error.message}</div>;
+  }
+  if (!data && isLoading) {
+    return (
+      <div className="flex flex-col gap-1 pl-3">
+        {[...Array(4)].map((_, i) => (
+          // biome-ignore lint/suspicious/noArrayIndexKey: skeleton
+          <div key={i} className="h-4 w-32 animate-pulse rounded bg-zinc-800" />
+        ))}
+      </div>
+    );
+  }
+  if (!data || data.results.length === 0) {
+    return <div className="pl-3 text-xs text-zinc-600">No matches</div>;
+  }
+  return (
+    <div className="flex flex-col gap-0.5 pb-2">
+      {data.results.map((r) => {
+        const name = basename(r.path);
+        const icon = fileIcon(name);
+        const dir = dirOf(r.path);
+        if (mode === "name") {
+          return (
+            <button
+              key={r.path}
+              type="button"
+              onClick={() => onSelect(r.path)}
+              title={r.path}
+              className="flex items-center gap-1.5 rounded px-1.5 py-0.5 text-left text-xs text-zinc-300 hover:bg-zinc-800/60 hover:text-zinc-100"
+            >
+              <icon.Icon size={14} className={`shrink-0 ${icon.className}`} aria-hidden />
+              <span className="truncate">{name}</span>
+              {dir && <span className="truncate text-[10px] text-zinc-600">{dir}</span>}
+            </button>
+          );
+        }
+        return (
+          <div key={r.path} className="flex flex-col">
+            <button
+              type="button"
+              onClick={() => onSelect(r.path, r.matches?.[0]?.line)}
+              title={r.path}
+              className="flex items-center gap-1.5 rounded px-1.5 py-0.5 text-left text-xs text-zinc-200 hover:bg-zinc-800/60"
+            >
+              <icon.Icon size={14} className={`shrink-0 ${icon.className}`} aria-hidden />
+              <span className="truncate font-medium">{name}</span>
+              {dir && <span className="truncate text-[10px] text-zinc-600">{dir}</span>}
+            </button>
+            {r.matches?.map((m) => (
+              <button
+                key={`${r.path}:${m.line}:${m.col}`}
+                type="button"
+                onClick={() => onSelect(r.path, m.line)}
+                className="ml-6 flex items-baseline gap-2 rounded px-1.5 py-0.5 text-left text-[11px] text-zinc-400 hover:bg-zinc-800/40 hover:text-zinc-200"
+              >
+                <span className="w-7 shrink-0 text-right text-zinc-600 tabular-nums">{m.line}</span>
+                <span className="truncate font-mono">{m.preview}</span>
+              </button>
+            ))}
+          </div>
+        );
+      })}
+      {data.truncated && (
+        <div className="px-1.5 py-1 text-[10px] text-zinc-600">
+          Results truncated. Refine "{query}" for more matches.
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Main FilesTab
 // ---------------------------------------------------------------------------
 interface FilesTabProps {
@@ -313,6 +404,12 @@ export function FilesTab({ projectId }: FilesTabProps) {
   // file is first opened.
   const [draftLoaded, setDraftLoaded] = useState<FileDraftRow | null | undefined>(undefined);
   const [treeOpen, setTreeOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchMode, setSearchMode] = useState<FileSearchMode>("name");
+  const [initialLine, setInitialLine] = useState<number | undefined>(undefined);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const search = useFileSearch(projectId, searchQuery, searchMode);
+  const isSearching = searchQuery.trim().length >= 2;
 
   const mutateDirs = (dirs: string[]) => {
     const unique = Array.from(new Set(dirs));
@@ -373,7 +470,7 @@ export function FilesTab({ projectId }: FilesTabProps) {
     selectedPath ?? "",
   );
 
-  const handleSelect = (path: string) => {
+  const handleSelect = (path: string, line?: number) => {
     if (selectedPath && path !== selectedPath) {
       // A debounced draft PUT may still be pending against the OLD path. The
       // server only stores the persisted-to-disk state, so dropping the
@@ -389,6 +486,7 @@ export function FilesTab({ projectId }: FilesTabProps) {
     setSaveErr(null);
     setSavedMtime(undefined);
     setDraftLoaded(undefined);
+    setInitialLine(line);
   };
 
   // Load draft on selection change. One-shot fetch (not SWR) so re-selecting a
@@ -489,6 +587,16 @@ export function FilesTab({ projectId }: FilesTabProps) {
         e.preventDefault();
         doSaveRef.current(false);
       }
+      if (e.key === "p" && (e.metaKey || e.ctrlKey)) {
+        // Don't steal Cmd+Shift+P (palette) — only the plain combo focuses search.
+        if (e.shiftKey) return;
+        const input = searchInputRef.current;
+        if (!input) return;
+        e.preventDefault();
+        input.focus();
+        input.select();
+        setTreeOpen(true);
+      }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
@@ -519,8 +627,8 @@ export function FilesTab({ projectId }: FilesTabProps) {
   };
   const dirty = editorValue !== savedContent;
 
-  const handleSelectAndClose = (path: string) => {
-    handleSelect(path);
+  const handleSelectAndClose = (path: string, line?: number) => {
+    handleSelect(path, line);
     setTreeOpen(false);
   };
 
@@ -536,20 +644,71 @@ export function FilesTab({ projectId }: FilesTabProps) {
             onClick={newFile}
             aria-label="New file"
             title="New file"
-            className="rounded p-1.5 text-zinc-500 hover:text-zinc-200 md:p-0.5"
+            className="rounded p-1.5 text-zinc-500 hover:text-zinc-200 md:p-1"
           >
-            ＋
+            <FilePlus size={14} aria-hidden />
           </button>
           <button
             type="button"
             onClick={newFolder}
             aria-label="New folder"
             title="New folder"
-            className="rounded p-1.5 text-zinc-500 hover:text-zinc-200 md:p-0.5"
+            className="rounded p-1.5 text-zinc-500 hover:text-zinc-200 md:p-1"
           >
-            📁
+            <FolderPlus size={14} aria-hidden />
           </button>
         </span>
+      </div>
+      <div className="px-2 pb-1">
+        <div className="relative flex items-center">
+          <Search
+            size={12}
+            aria-hidden
+            className="pointer-events-none absolute left-2 text-zinc-500"
+          />
+          <input
+            ref={searchInputRef}
+            type="search"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder={searchMode === "name" ? "Find files…" : "Find in files…"}
+            aria-label="Search files"
+            className="h-7 w-full rounded-md border border-zinc-800 bg-zinc-950/60 pl-7 pr-14 text-[11px] text-zinc-200 placeholder:text-zinc-600 focus:border-zinc-600 focus:outline-none"
+          />
+          <div className="absolute right-1 flex items-center gap-0.5">
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchQuery("");
+                  searchInputRef.current?.focus();
+                }}
+                aria-label="Clear search"
+                title="Clear"
+                className="rounded p-0.5 text-zinc-500 hover:text-zinc-200"
+              >
+                <X size={12} aria-hidden />
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setSearchMode((m) => (m === "name" ? "content" : "name"))}
+              aria-label={`Switch to ${searchMode === "name" ? "content" : "name"} search`}
+              title={
+                searchMode === "name"
+                  ? "Name match (click for content)"
+                  : "Content match (click for name)"
+              }
+              className={`rounded px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${
+                searchMode === "content"
+                  ? "bg-zinc-800 text-zinc-100"
+                  : "text-zinc-500 hover:text-zinc-200"
+              }`}
+            >
+              {searchMode === "name" ? "Aa" : "·*"}
+            </button>
+          </div>
+        </div>
       </div>
       {treeErr && (
         <div className="mx-2 mb-1 rounded border border-red-900/60 bg-red-950/30 px-2 py-1 text-[11px] text-red-300">
@@ -565,25 +724,36 @@ export function FilesTab({ projectId }: FilesTabProps) {
         </div>
       )}
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <FileTree
-          projectId={projectId}
-          dirPath=""
-          onSelect={handleSelectAndClose}
-          selectedPath={selectedPath}
-          onMutated={(dirs) => {
-            void mutateDirs(dirs);
-          }}
-          onSelectionGone={(gonePath) => {
-            // The file/dir was renamed or deleted on disk — any draft for it is
-            // now moot and would only confuse a future open of an unrelated
-            // file at the same path.
-            void deleteFileDraft(projectId, gonePath);
-            setSelectedPath(null);
-            setSavedMtime(undefined);
-            setEditorValue("");
-            setSavedContent("");
-          }}
-        />
+        {isSearching ? (
+          <SearchResults
+            query={searchQuery}
+            mode={searchMode}
+            data={search.data}
+            isLoading={search.isLoading}
+            error={search.error}
+            onSelect={handleSelectAndClose}
+          />
+        ) : (
+          <FileTree
+            projectId={projectId}
+            dirPath=""
+            onSelect={(p) => handleSelectAndClose(p)}
+            selectedPath={selectedPath}
+            onMutated={(dirs) => {
+              void mutateDirs(dirs);
+            }}
+            onSelectionGone={(gonePath) => {
+              // The file/dir was renamed or deleted on disk — any draft for it is
+              // now moot and would only confuse a future open of an unrelated
+              // file at the same path.
+              void deleteFileDraft(projectId, gonePath);
+              setSelectedPath(null);
+              setSavedMtime(undefined);
+              setEditorValue("");
+              setSavedContent("");
+            }}
+          />
+        )}
       </div>
     </>
   );
@@ -645,6 +815,7 @@ export function FilesTab({ projectId }: FilesTabProps) {
                 language={detectLanguage(selectedPath.split("/").pop() ?? "")}
                 onChange={setEditorValue}
                 height="100%"
+                initialLine={initialLine}
               />
             </div>
           </div>

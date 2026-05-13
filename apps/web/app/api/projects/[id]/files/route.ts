@@ -1,33 +1,17 @@
 import "server-only";
 import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { join } from "node:path";
 import type { ProjectId } from "@the-manager/shared";
 import { ValidationError } from "@the-manager/shared";
 import { z } from "zod";
 import { handleErr, jsonErr, jsonOk, parseJson } from "../../../../../lib/api";
 import { resolveProjectCwd } from "../../../../../lib/cwd";
+import { IGNORED, safeResolve } from "../../../../../lib/project-fs";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-const IGNORED = new Set(["node_modules", ".git", ".next", ".turbo", "dist", ".DS_Store", ".cache"]);
-
 const MAX_FILE_BYTES = 1024 * 1024; // 1 MB
-
-/**
- * Resolve a project-relative path safely. Throws if the result escapes the
- * project root (path-traversal protection). Returns the absolute filesystem
- * path on success.
- */
-function safeResolve(projectRoot: string, relPath: string): string {
-  if (isAbsolute(relPath)) throw new ValidationError("path must be relative to the project");
-  const abs = resolve(projectRoot, relPath);
-  const rel = relative(projectRoot, abs);
-  if (rel.startsWith("..") || rel.startsWith(`..${sep}`)) {
-    throw new ValidationError("path escapes the project root");
-  }
-  return abs;
-}
 
 export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }) {
   try {

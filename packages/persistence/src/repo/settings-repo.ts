@@ -9,6 +9,11 @@ export const defaultSettings = (): SettingsFile => ({
     windowState: null,
     flags: {},
     network: { preferredPort: null },
+    notifications: {
+      osToasts: true,
+      threshold: "info",
+      mutedProjects: [],
+    },
   },
 });
 
@@ -21,10 +26,20 @@ export const migrateSettings = (raw: unknown): unknown => {
   if (!raw || typeof raw !== "object" || !("data" in raw)) return raw;
   const data = (raw as { data?: Record<string, unknown> }).data;
   if (!data || typeof data !== "object") return raw;
-  if (!("network" in data)) {
-    return { ...raw, data: { ...data, network: { preferredPort: null } } };
+  let next: Record<string, unknown> = data;
+  let mutated = false;
+  if (!("network" in next)) {
+    next = { ...next, network: { preferredPort: null } };
+    mutated = true;
   }
-  return raw;
+  if (!("notifications" in next)) {
+    next = {
+      ...next,
+      notifications: { osToasts: true, threshold: "info", mutedProjects: [] },
+    };
+    mutated = true;
+  }
+  return mutated ? { ...raw, data: next } : raw;
 };
 
 /** Constructs the shared settings store. Safe to call from multiple processes. */

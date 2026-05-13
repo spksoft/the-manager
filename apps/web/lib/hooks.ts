@@ -19,7 +19,13 @@ import type {
   TerminalDrawerState,
   UiStateData,
 } from "@the-manager/persistence";
+import { useCallback, useEffect, useRef, useState } from "react";
 import useSWR, { useSWRConfig } from "swr";
+import type {
+  NotificationEvent,
+  NotificationMuteEntry,
+  NotificationSnapshot,
+} from "./notification-types";
 
 // ---------------------------------------------------------------------------
 // Fetcher — throws on non-2xx so SWR treats it as an error.
@@ -466,6 +472,38 @@ export function useFiles(id: string | null, path: string) {
 }
 
 // ---------------------------------------------------------------------------
+// File search
+// ---------------------------------------------------------------------------
+export interface FileSearchMatch {
+  line: number;
+  col: number;
+  preview: string;
+}
+
+export interface FileSearchResult {
+  path: string;
+  type: "file";
+  score: number;
+  matches?: FileSearchMatch[];
+}
+
+export interface FileSearchResponse {
+  results: FileSearchResult[];
+  truncated: boolean;
+}
+
+export type FileSearchMode = "name" | "content";
+
+export function useFileSearch(id: string | null, query: string, mode: FileSearchMode) {
+  const trimmed = query.trim();
+  const key =
+    id && trimmed.length >= 2
+      ? `/api/projects/${id}/files/search?q=${encodeURIComponent(trimmed)}&mode=${mode}`
+      : null;
+  return useSWR<FileSearchResponse>(key, fetcher, { keepPreviousData: true });
+}
+
+// ---------------------------------------------------------------------------
 // Assets
 // ---------------------------------------------------------------------------
 export function useAssets() {
@@ -615,4 +653,121 @@ export async function deleteFileDraft(projectId: string, path: string): Promise<
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ path }),
   });
+}
+
+// ---------------------------------------------------------------------------
+// Notifications. Backed by the SSE channel at /api/notifications/stream — see
+// apps/web/lib/notifications.ts for the server-side bus. The hook hydrates
+// from the initial `snapshot` event and then mutates local state in response
+// to `event` / `ack` / `mute` pushes so multiple tabs converge.
+// ---------------------------------------------------------------------------
+export interface UseNotificationsResult {
+  events: NotificationEvent[];
+  muted: Record<string, NotificationMuteEntry>;
+  unreadCount: number;
+  /** Mark a set of events read (server broadcasts to all tabs). */
+  ack: (ids: string[]) => void;
+  /** Mute a project for 1 hour or forever. */
+  mute: (projectId: string, duration: "1h" | "forever") => void;
+  unmute: (projectId: string) => void;
+  /** True once the initial snapshot has arrived. */
+  hydrated: boolean;
+}
+
+export function useNotifications(): UseNotificationsResult {
+  const [events, setEvents] = useState<NotificationEvent[]>([]);
+  const [muted, setMuted] = useState<Record<string, NotificationMuteEntry>>({});
+  const [hydrated, setHydrated] = useState(false);
+  /** Refs so the callbacks below don't need a re-bind every render. */
+  const eventsRef = useRef(events);
+  eventsRef.current = events;
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const es = new EventSource("/api/notifications/stream");
+
+    const onSnapshot = (e: MessageEvent) => {
+      const snap = safeParse<NotificationSnapshot>(e.data, { events: [], muted: [] });
+      setEvents(snap.events.slice().reverse()); // newest-first for the bell
+      setMuted(Object.fromEntries(snap.muted.map((m) => [m.projectId, m])));
+      setHydrated(true);
+    };
+    const onEvent = (e: MessageEvent) => {
+      const evt = safeParse<NotificationEvent | null>(e.data, null);
+      if (!evt) return;
+      setEvents((prev) => {
+        // Dedupe by id in case a snapshot raced an event.
+        if (prev.some((p) => p.id === evt.id)) return prev;
+        return [evt, ...prev].slice(0, 50);
+      });
+    };
+    const onAck = (e: MessageEvent) => {
+      const data = safeParse<{ ids: string[] }>(e.data, { ids: [] });
+      if (data.ids.length === 0) return;
+      const ts = new Date().toISOString();
+      setEvents((prev) =>
+        prev.map((p) => (data.ids.includes(p.id) && !p.readAt ? { ...p, readAt: ts } : p)),
+      );
+    };
+    const onMute = (e: MessageEvent) => {
+      const data = safeParse<{ projectId: string; entry: NotificationMuteEntry | null }>(e.data, {
+        projectId: "",
+        entry: null,
+      });
+      if (!data.projectId) return;
+      setMuted((prev) => {
+        const next = { ...prev };
+        if (data.entry) next[data.projectId] = data.entry;
+        else delete next[data.projectId];
+        return next;
+      });
+    };
+
+    es.addEventListener("snapshot", onSnapshot);
+    es.addEventListener("event", onEvent);
+    es.addEventListener("ack", onAck);
+    es.addEventListener("mute", onMute);
+
+    return () => {
+      es.close();
+    };
+  }, []);
+
+  const ack = useCallback((ids: string[]) => {
+    if (ids.length === 0) return;
+    void fetch("/api/notifications/ack", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ids }),
+    });
+  }, []);
+
+  const mute = useCallback((projectId: string, duration: "1h" | "forever") => {
+    const until: string =
+      duration === "forever" ? "forever" : new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    void fetch("/api/notifications/mute", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ projectId, until }),
+    });
+  }, []);
+
+  const unmute = useCallback((projectId: string) => {
+    void fetch(`/api/notifications/mute?projectId=${encodeURIComponent(projectId)}`, {
+      method: "DELETE",
+    });
+  }, []);
+
+  const unreadCount = events.reduce((n, e) => (e.readAt ? n : n + 1), 0);
+
+  return { events, muted, unreadCount, ack, mute, unmute, hydrated };
+}
+
+function safeParse<T>(raw: string | undefined, fallback: T): T {
+  if (raw == null) return fallback;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
 }

@@ -5,6 +5,7 @@ import type { AgentHandle } from "@the-manager/drivers";
 import { ClaudeDriver } from "@the-manager/drivers";
 import { paths } from "@the-manager/persistence";
 import type { ProjectId } from "@the-manager/shared";
+import { emitNotification } from "./notifications";
 import {
   appendChunk,
   attach as attachRecording,
@@ -41,11 +42,17 @@ export interface Session {
   /** ISO timestamp of the most recent stdout chunk, or session start if none yet. */
   lastActivityAt: string;
   /**
-   * "working" once the user has submitted (Enter) and the agent is producing
-   * output; "idle" while waiting for the user. Transitions working → idle bump
-   * `readyAt` so the UI can surface a "ready / needs input" notification.
+   * State machine:
+   *  - "idle": waiting for user input, no pending work
+   *  - "working": user submitted, agent producing output
+   *  - "needs_input": agent stopped producing because it's blocking on a
+   *    permission/confirmation prompt; user attention is required mid-flow
+   *
+   * Transitions working → idle bump `readyAt` so the UI can surface a "ready"
+   * notification. needs_input is detected via a TUI prompt heuristic in the
+   * data handler and cleared on any subsequent user keystroke.
    */
-  state: "idle" | "working";
+  state: "idle" | "working" | "needs_input";
   /** Bumped each time the agent transitions from working to idle. */
   readyAt: string | null;
   /** Pending timeout that flips state back to idle after a quiet period. */
@@ -364,7 +371,7 @@ for notes and intermediate files tied to orchestration. Project work goes
 through the project agents.
 `;
 
-function scheduleIdleCheck(session: Session): void {
+function scheduleIdleCheck(session: Session, projectId: ProjectId): void {
   if (session.idleTimer) clearTimeout(session.idleTimer);
   session.idleTimer = setTimeout(() => {
     session.idleTimer = null;
@@ -372,7 +379,51 @@ function scheduleIdleCheck(session: Session): void {
     if (session.state !== "working") return;
     session.state = "idle";
     session.readyAt = new Date().toISOString();
+    emitNotification({
+      projectId,
+      kind: "ready",
+      severity: "info",
+      message: "is ready for input",
+    });
   }, IDLE_QUIET_MS);
+}
+
+/**
+ * Heuristic: does the recent pty output look like Claude is showing a
+ * permission / confirmation prompt? We scan a small tail of the recording for
+ * a handful of known marker phrases. This is intentionally conservative —
+ * better to miss a prompt than to fire spurious urgent notifications. Swap in
+ * structured detection if claude exposes one.
+ */
+const PROMPT_MARKERS: readonly string[] = [
+  "Do you want to proceed?",
+  "Do you want to make this edit",
+  "Do you want to allow",
+  "❯ 1. Yes",
+  "❯ 1) Yes",
+  "[y/n]",
+  "(y/n)",
+];
+const PROMPT_TAIL_BYTES = 2_048;
+
+function recordingTail(session: Session, bytes: number): string {
+  let total = 0;
+  const chunks: string[] = [];
+  for (let i = session.recording.length - 1; i >= 0 && total < bytes; i--) {
+    const c = session.recording[i];
+    if (!c) continue;
+    chunks.unshift(c);
+    total += c.length;
+  }
+  return chunks.join("");
+}
+
+function looksLikePrompt(session: Session): boolean {
+  const tail = recordingTail(session, PROMPT_TAIL_BYTES);
+  for (const marker of PROMPT_MARKERS) {
+    if (tail.includes(marker)) return true;
+  }
+  return false;
 }
 
 async function createSession(projectId: ProjectId, cols: number, rows: number): Promise<Session> {
@@ -397,7 +448,26 @@ async function createSession(projectId: ProjectId, cols: number, rows: number): 
     appendChunk(session, chunk);
     session.lastActivityAt = new Date().toISOString();
     for (const sub of session.dataSubs) sub(chunk);
-    if (session.state === "working") scheduleIdleCheck(session);
+    if (session.state === "working") {
+      // Permission prompt mid-flow → flip to needs_input and fire urgent.
+      // The idle timer is left to expire harmlessly; the next user keystroke
+      // bounces back to "working".
+      if (looksLikePrompt(session)) {
+        session.state = "needs_input";
+        if (session.idleTimer) {
+          clearTimeout(session.idleTimer);
+          session.idleTimer = null;
+        }
+        emitNotification({
+          projectId,
+          kind: "needs_input",
+          severity: "urgent",
+          message: "is waiting on your approval",
+        });
+      } else {
+        scheduleIdleCheck(session, projectId);
+      }
+    }
   });
 
   handle.on("exit", () => {
@@ -406,6 +476,12 @@ async function createSession(projectId: ProjectId, cols: number, rows: number): 
       clearTimeout(session.idleTimer);
       session.idleTimer = null;
     }
+    emitNotification({
+      projectId,
+      kind: "exited",
+      severity: "attention",
+      message: "session exited",
+    });
     const tombstone = "\r\n\x1b[2m[claude exited]\x1b[0m\r\n";
     for (const sub of session.dataSubs) sub(tombstone);
     for (const sub of session.exitSubs) sub();
@@ -451,12 +527,20 @@ export function writeInput(projectId: ProjectId, data: string): boolean {
   const s = getSession(projectId);
   if (!s) return false;
   s.handle.write(data);
+  // If we'd flagged needs_input (permission prompt), any keystroke the user
+  // sends is them responding to it — clear the flag back to working so a
+  // single-key answer ("y", "1") doesn't leave the urgent notification armed.
+  if (s.state === "needs_input") {
+    s.state = "working";
+    scheduleIdleCheck(s, projectId);
+    return true;
+  }
   // Only Enter actually submits work to claude. Plain keystrokes (typing,
   // arrows, paste before Enter) shouldn't flip the agent into "working" — the
   // user is still composing.
   if (data.includes("\r") || data.includes("\n")) {
     s.state = "working";
-    scheduleIdleCheck(s);
+    scheduleIdleCheck(s, projectId);
   }
   return true;
 }

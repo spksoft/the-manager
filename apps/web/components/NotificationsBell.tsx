@@ -1,9 +1,10 @@
 "use client";
 
 import type { ProjectRow } from "@the-manager/persistence";
-import { useEffect, useRef, useState } from "react";
-import { useSessionStatuses } from "../lib/hooks";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useNotifications, useSettings, useUiState } from "../lib/hooks";
 import { MANAGER_PROJECT_ID } from "../lib/manager-id";
+import type { NotificationEvent } from "../lib/notification-types";
 
 type JumpTarget = { type: "manager" } | { type: "project"; id: string };
 
@@ -12,105 +13,114 @@ interface NotificationsBellProps {
   onJump: (target: JumpTarget) => void;
 }
 
-interface Notification {
-  id: string;
-  ts: string;
+interface ProjectGroup {
   projectId: string;
-  /** Short user-facing text shown in the row. */
-  message: string;
-  kind: "exited" | "ready";
+  name: string;
+  events: NotificationEvent[];
+  unreadCount: number;
+  /** Highest severity among unread events; falls back to most recent if all read. */
+  highlight: NotificationEvent;
 }
 
-const MAX_NOTIFICATIONS = 20;
-
 /**
- * Header bell. Watches `useSessionStatuses` for two kinds of transitions:
- *   - alive → dead (kind "exited")
- *   - readyAt bumps, i.e. the agent went from working back to idle, meaning it
- *     either finished its response or is now waiting on the user (kind "ready")
- *
- * Each notification shows in the bell dropdown and — when the user has granted
- * permission — also fires a Web Notification so the user gets pinged even when
- * the tab is backgrounded. Click a row → jump the active view to that project.
+ * Header bell. Subscribes to the server-side notification bus via SSE, groups
+ * events by project, surfaces unread counts, and routes the user to the right
+ * surface on click. Fires Web Notifications (OS toasts) only when the user is
+ * not already looking at that project — suppression uses `useUiState` plus the
+ * document visibility state. Urgent events (`needs_input`) always sound.
  */
 export function NotificationsBell({ projects, onJump }: NotificationsBellProps) {
-  const { data } = useSessionStatuses();
-  const [items, setItems] = useState<Notification[]>([]);
+  const { events, muted, unreadCount, ack, mute, unmute, hydrated } = useNotifications();
+  const { data: settings } = useSettings();
+  const { data: uiState } = useUiState();
   const [open, setOpen] = useState(false);
-  const prevAliveRef = useRef<Record<string, boolean>>({});
-  const prevReadyAtRef = useRef<Record<string, string | null>>({});
-  /** True once we've seen the first poll; suppresses spurious notifications
-   * on initial mount when prev refs are empty. */
-  const initializedRef = useRef(false);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
-  // Request OS notification permission once on mount. We don't block on the
-  // result — if the user denies (or the API is unavailable, e.g. in Electron's
-  // older shells) we silently fall back to bell-only.
+  // Request OS notification permission once.
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (typeof Notification === "undefined") return;
     if (Notification.permission === "default") {
       void Notification.requestPermission().catch(() => {
-        /* user dismissed the prompt — fine, we degrade to bell-only */
+        /* user dismissed — degrade to bell-only */
       });
     }
   }, []);
 
+  // Resolve project names. The Manager has a known fixed id.
+  const nameFor = useMemo(() => {
+    const lookup = new Map(projects.map((p) => [p.id, p.name]));
+    return (pid: string) =>
+      pid === MANAGER_PROJECT_ID ? "Manager" : (lookup.get(pid) ?? pid.slice(0, 8));
+  }, [projects]);
+
+  // Group events by projectId; sort groups by most-recent event ts.
+  const groups: ProjectGroup[] = useMemo(() => {
+    const byProject = new Map<string, NotificationEvent[]>();
+    for (const e of events) {
+      const arr = byProject.get(e.projectId) ?? [];
+      arr.push(e);
+      byProject.set(e.projectId, arr);
+    }
+    const out: ProjectGroup[] = [];
+    for (const [pid, evs] of byProject) {
+      const unread = evs.filter((e) => !e.readAt);
+      const highlight = pickHighlight(unread.length > 0 ? unread : evs);
+      if (!highlight) continue;
+      out.push({
+        projectId: pid,
+        name: nameFor(pid),
+        events: evs,
+        unreadCount: unread.length,
+        highlight,
+      });
+    }
+    out.sort((a, b) => Date.parse(b.events[0]?.ts ?? "") - Date.parse(a.events[0]?.ts ?? ""));
+    return out;
+  }, [events, nameFor]);
+
+  // Fire OS toasts for newly-arrived events. The deduped `events` array is
+  // newest-first; we track the most recent id we've already handled and only
+  // toast anything that arrived after it.
+  const lastToastedIdRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!data?.statuses) return;
-    const statuses = data.statuses;
-    const prevAlive = prevAliveRef.current;
-    const prevReadyAt = prevReadyAtRef.current;
-    const nextAlive: Record<string, boolean> = {};
-    const nextReadyAt: Record<string, string | null> = {};
-    const fresh: Notification[] = [];
-    const wasInitialized = initializedRef.current;
-
-    for (const pid of new Set([...Object.keys(prevAlive), ...Object.keys(statuses)])) {
-      const status = statuses[pid];
-      const alive = status?.alive ?? false;
-      const readyAt = status?.readyAt ?? null;
-      nextAlive[pid] = alive;
-      nextReadyAt[pid] = readyAt;
-      if (!wasInitialized) continue;
-
-      const name =
-        pid === MANAGER_PROJECT_ID
-          ? "Manager"
-          : (projects.find((p) => p.id === pid)?.name ?? pid.slice(0, 8));
-
-      // alive → dead transition
-      if (prevAlive[pid] === true && !alive) {
-        fresh.push({
-          id: `${pid}-exit-${Date.now()}`,
-          ts: new Date().toISOString(),
-          projectId: pid,
-          message: `${name} session exited`,
-          kind: "exited",
-        });
-      }
-
-      // working → idle transition (readyAt bumped to a new value)
-      if (readyAt && readyAt !== prevReadyAt[pid]) {
-        fresh.push({
-          id: `${pid}-ready-${readyAt}`,
-          ts: readyAt,
-          projectId: pid,
-          message: `${name} is ready for input`,
-          kind: "ready",
-        });
-      }
+    if (!hydrated) return;
+    if (events.length === 0) return;
+    const newestId = events[0]?.id;
+    if (!newestId) return;
+    const cutoff = lastToastedIdRef.current;
+    lastToastedIdRef.current = newestId;
+    if (cutoff === null) return; // first paint after hydration: don't replay history
+    const fresh: NotificationEvent[] = [];
+    for (const e of events) {
+      if (e.id === cutoff) break;
+      fresh.push(e);
     }
+    fireToasts(fresh, {
+      activeView: uiState?.activeView,
+      osToasts: settings?.data.notifications.osToasts ?? true,
+      threshold: settings?.data.notifications.threshold ?? "info",
+      nameFor,
+      onClick: (target) => {
+        onJump(target);
+        try {
+          window.focus();
+        } catch {
+          /* ignore */
+        }
+      },
+    });
+  }, [events, hydrated, uiState?.activeView, settings, onJump, nameFor]);
 
-    prevAliveRef.current = nextAlive;
-    prevReadyAtRef.current = nextReadyAt;
-    initializedRef.current = true;
-
-    if (fresh.length > 0) {
-      setItems((existing) => [...fresh, ...existing].slice(0, MAX_NOTIFICATIONS));
-      fireOsNotifications(fresh);
-    }
-  }, [data, projects]);
+  // Ack everything visible after the dropdown stays open briefly.
+  useEffect(() => {
+    if (!open) return;
+    const t = setTimeout(() => {
+      const unreadIds = events.filter((e) => !e.readAt).map((e) => e.id);
+      if (unreadIds.length > 0) ack(unreadIds);
+    }, 600);
+    return () => clearTimeout(t);
+  }, [open, events, ack]);
 
   // Close on Escape.
   useEffect(() => {
@@ -122,17 +132,23 @@ export function NotificationsBell({ projects, onJump }: NotificationsBellProps) 
     return () => window.removeEventListener("keydown", handler);
   }, [open]);
 
-  const handleClick = (n: Notification) => {
+  const handleJump = (projectId: string) => {
     setOpen(false);
-    setItems((existing) => existing.filter((x) => x.id !== n.id));
     onJump(
-      n.projectId === MANAGER_PROJECT_ID
-        ? { type: "manager" }
-        : { type: "project", id: n.projectId },
+      projectId === MANAGER_PROJECT_ID ? { type: "manager" } : { type: "project", id: projectId },
     );
   };
 
-  const count = items.length;
+  const toggleGroup = (projectId: string) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(projectId)) next.delete(projectId);
+      else next.add(projectId);
+      return next;
+    });
+  };
+
+  const hasUrgent = events.some((e) => !e.readAt && e.severity === "urgent");
 
   return (
     <div className="relative">
@@ -141,19 +157,25 @@ export function NotificationsBell({ projects, onJump }: NotificationsBellProps) 
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="true"
         aria-expanded={open}
-        aria-label={`Notifications (${count})`}
+        aria-label={`Notifications (${unreadCount})`}
         className="relative flex h-8 w-8 items-center justify-center rounded-md text-zinc-400 transition-colors hover:bg-zinc-800/60 hover:text-zinc-100"
-        title={count > 0 ? `${count} notification${count === 1 ? "" : "s"}` : "Notifications"}
+        title={
+          unreadCount > 0
+            ? `${unreadCount} unread notification${unreadCount === 1 ? "" : "s"}`
+            : "Notifications"
+        }
       >
         <span aria-hidden className="text-base">
           🔔
         </span>
-        {count > 0 && (
+        {unreadCount > 0 && (
           <span
             aria-hidden
-            className="absolute -right-0.5 -top-0.5 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-semibold text-white"
+            className={`absolute -right-0.5 -top-0.5 flex h-4 min-w-[16px] items-center justify-center rounded-full px-1 text-[10px] font-semibold text-white ${
+              hasUrgent ? "bg-red-500" : "bg-amber-500"
+            }`}
           >
-            {count > 9 ? "9+" : count}
+            {unreadCount > 9 ? "9+" : unreadCount}
           </span>
         )}
       </button>
@@ -164,40 +186,145 @@ export function NotificationsBell({ projects, onJump }: NotificationsBellProps) 
           <div
             role="menu"
             aria-label="Notifications"
-            className="animate-slide-up absolute right-0 z-40 mt-2 w-80 overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950 shadow-2xl"
+            className="animate-slide-up absolute right-0 z-40 mt-2 w-96 overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950 shadow-2xl"
           >
             <header className="flex items-center justify-between border-b border-zinc-800 px-3 py-2">
               <span className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
                 Notifications
               </span>
-              {count > 0 && (
+              {events.length > 0 && (
                 <button
                   type="button"
-                  onClick={() => setItems([])}
+                  onClick={() => {
+                    const ids = events.filter((e) => !e.readAt).map((e) => e.id);
+                    if (ids.length > 0) ack(ids);
+                  }}
                   className="text-[11px] text-zinc-500 hover:text-zinc-200"
-                  aria-label="Clear all notifications"
+                  aria-label="Mark all as read"
                 >
-                  Clear all
+                  Mark all read
                 </button>
               )}
             </header>
-            {count === 0 ? (
-              <div className="px-3 py-6 text-center text-xs text-zinc-500">Nothing right now.</div>
+            {groups.length === 0 ? (
+              <div className="px-3 py-6 text-center text-xs text-zinc-500">
+                You'll be pinged when an agent finishes or asks for approval.
+              </div>
             ) : (
-              <ul className="max-h-96 overflow-y-auto">
-                {items.map((n) => (
-                  <li key={n.id}>
-                    <button
-                      type="button"
-                      onClick={() => handleClick(n)}
-                      role="menuitem"
-                      className="flex w-full flex-col items-start gap-0.5 border-b border-zinc-900 px-3 py-2 text-left transition-colors last:border-0 hover:bg-zinc-900/60"
-                    >
-                      <span className="text-xs text-zinc-200">{n.message}</span>
-                      <span className="text-[10px] text-zinc-500">{relativeTime(n.ts)}</span>
-                    </button>
-                  </li>
-                ))}
+              <ul className="max-h-[28rem] overflow-y-auto">
+                {groups.map((g) => {
+                  const isMuted = !!muted[g.projectId];
+                  const isOpen = expanded.has(g.projectId);
+                  return (
+                    <li key={g.projectId} className="border-b border-zinc-900 last:border-0">
+                      <button
+                        type="button"
+                        onClick={() => toggleGroup(g.projectId)}
+                        className="flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-zinc-900/60"
+                      >
+                        <SeverityDot severity={g.highlight.severity} />
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="truncate text-xs font-medium text-zinc-100">
+                              {g.name}
+                            </span>
+                            {isMuted && (
+                              <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-[9px] uppercase tracking-wider text-zinc-400">
+                                muted
+                              </span>
+                            )}
+                            {g.unreadCount > 0 && (
+                              <span className="text-[10px] text-zinc-500">{g.unreadCount} new</span>
+                            )}
+                          </div>
+                          <div className="truncate text-[11px] text-zinc-400">
+                            {g.highlight.message} · {relativeTime(g.highlight.ts)}
+                          </div>
+                        </div>
+                        <span
+                          aria-hidden
+                          className={`text-zinc-600 transition-transform ${isOpen ? "rotate-90" : ""}`}
+                        >
+                          ›
+                        </span>
+                      </button>
+                      {isOpen && (
+                        <div className="bg-zinc-950/60 px-3 pb-2">
+                          <ul className="space-y-1">
+                            {g.events.map((e) => (
+                              <li
+                                key={e.id}
+                                className="flex items-start gap-2 rounded px-2 py-1.5 text-[11px] hover:bg-zinc-900/60"
+                              >
+                                <SeverityDot severity={e.severity} />
+                                <div className="min-w-0 flex-1">
+                                  <div className="truncate text-zinc-200">{e.message}</div>
+                                  {e.summary && (
+                                    <div className="truncate text-[10px] text-zinc-500">
+                                      {e.summary}
+                                    </div>
+                                  )}
+                                  <div className="text-[10px] text-zinc-600">
+                                    {relativeTime(e.ts)}
+                                  </div>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => handleJump(g.projectId)}
+                                  className="text-[10px] text-zinc-400 hover:text-zinc-100"
+                                  aria-label={`Jump to ${g.name}`}
+                                >
+                                  Jump
+                                </button>
+                              </li>
+                            ))}
+                          </ul>
+                          <div className="mt-2 flex items-center gap-3 border-t border-zinc-900 pt-2 text-[10px] text-zinc-500">
+                            <button
+                              type="button"
+                              onClick={() => handleJump(g.projectId)}
+                              className="hover:text-zinc-100"
+                            >
+                              Open project
+                            </button>
+                            <span className="text-zinc-700">·</span>
+                            {isMuted ? (
+                              <button
+                                type="button"
+                                onClick={() => unmute(g.projectId)}
+                                className="hover:text-zinc-100"
+                              >
+                                Unmute
+                              </button>
+                            ) : (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => mute(g.projectId, "1h")}
+                                  className="hover:text-zinc-100"
+                                >
+                                  Mute 1h
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => mute(g.projectId, "forever")}
+                                  className="hover:text-zinc-100"
+                                >
+                                  Mute forever
+                                </button>
+                              </>
+                            )}
+                          </div>
+                          {isMuted && (
+                            <div className="mt-1 text-[10px] text-zinc-600">
+                              Urgent events (approval prompts) will still notify.
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </div>
@@ -207,19 +334,86 @@ export function NotificationsBell({ projects, onJump }: NotificationsBellProps) 
   );
 }
 
-function fireOsNotifications(items: Notification[]): void {
+function SeverityDot({ severity }: { severity: NotificationEvent["severity"] }) {
+  const tone =
+    severity === "urgent"
+      ? "bg-red-500"
+      : severity === "attention"
+        ? "bg-amber-500"
+        : "bg-zinc-500";
+  return <span aria-hidden className={`mt-1 h-2 w-2 shrink-0 rounded-full ${tone}`} />;
+}
+
+function pickHighlight(events: NotificationEvent[]): NotificationEvent | undefined {
+  // Severity rank — urgent first. Within the same severity, newest wins.
+  const rank: Record<NotificationEvent["severity"], number> = {
+    urgent: 3,
+    attention: 2,
+    info: 1,
+  };
+  return [...events].sort((a, b) => {
+    const dr = rank[b.severity] - rank[a.severity];
+    if (dr !== 0) return dr;
+    return Date.parse(b.ts) - Date.parse(a.ts);
+  })[0];
+}
+
+interface ToastOpts {
+  activeView: { type: string; id?: string } | undefined;
+  osToasts: boolean;
+  threshold: NotificationEvent["severity"];
+  nameFor: (projectId: string) => string;
+  onClick: (target: JumpTarget) => void;
+}
+
+function fireToasts(events: NotificationEvent[], opts: ToastOpts): void {
   if (typeof window === "undefined") return;
   if (typeof Notification === "undefined") return;
   if (Notification.permission !== "granted") return;
-  for (const n of items) {
+  if (!opts.osToasts) return;
+
+  const rank: Record<NotificationEvent["severity"], number> = {
+    info: 1,
+    attention: 2,
+    urgent: 3,
+  };
+  const minRank = rank[opts.threshold];
+
+  for (const e of events) {
+    if (rank[e.severity] < minRank) continue;
+    // Suppress toast if user is already focused on this project's view.
+    if (isFocusedOn(e.projectId, opts.activeView)) continue;
     try {
-      // `tag` collapses repeated notifications for the same event (the id is
-      // already deduped) so we don't stack identical OS toasts.
-      new Notification("The Manager", { body: n.message, tag: n.id });
+      const name = opts.nameFor(e.projectId);
+      const n = new Notification("The Manager", {
+        body: `${name} ${e.message}${e.summary ? ` — ${e.summary}` : ""}`,
+        tag: e.id,
+        // Urgent prompts deserve the OS's attention sound; the others stay
+        // silent so a busy session doesn't beep every couple of seconds.
+        silent: e.severity !== "urgent",
+      });
+      n.onclick = () => {
+        opts.onClick(
+          e.projectId === MANAGER_PROJECT_ID
+            ? { type: "manager" }
+            : { type: "project", id: e.projectId },
+        );
+        n.close();
+      };
     } catch {
       /* some platforms throw on construction — degrade silently */
     }
   }
+}
+
+function isFocusedOn(
+  projectId: string,
+  activeView: { type: string; id?: string } | undefined,
+): boolean {
+  if (typeof document !== "undefined" && document.visibilityState !== "visible") return false;
+  if (!activeView) return false;
+  if (projectId === MANAGER_PROJECT_ID) return activeView.type === "manager";
+  return activeView.type === "project" && activeView.id === projectId;
 }
 
 function relativeTime(iso: string): string {
