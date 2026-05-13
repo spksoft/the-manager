@@ -1,23 +1,28 @@
 import { join } from "node:path";
 import { app, BrowserWindow, dialog, ipcMain } from "electron";
-import { startEmbeddedServer } from "./server";
+import { devUrl } from "./config";
+import { getCurrentServerPort, restartEmbeddedServer, startEmbeddedServer } from "./server";
+import { rebuildTrayMenu, setupTray } from "./tray";
 
 const isDev = !app.isPackaged;
 
+let mainWindow: BrowserWindow | null = null;
+let currentUrl: string | null = null;
+let isQuitting = false;
+
 async function resolveAppUrl(): Promise<string> {
-  if (isDev) {
-    // Dev: point at `pnpm dev:web` (next dev on 3000).
-    return process.env.THE_MANAGER_DEV_URL ?? "http://localhost:3000";
-  }
+  if (isDev) return devUrl();
   const port = await startEmbeddedServer();
   return `http://localhost:${port}`;
 }
 
 /**
- * Polls /api/health until the URL is reachable, or gives up after `timeoutMs`.
+ * Polls /api/health until the URL is reachable, or throws after `timeoutMs`.
  * In dev mode this avoids the racy "Electron beats next dev to the punch and
  * shows a connection-refused page" startup that you'd otherwise hit when
- * launching both processes in parallel via `turbo run dev`.
+ * launching both processes in parallel via `turbo run dev`. Throws on timeout
+ * so the caller can surface a real error instead of letting Electron load
+ * `chrome-error://chromewebdata/`.
  */
 async function waitForReachable(url: string, timeoutMs = 30_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
@@ -30,11 +35,30 @@ async function waitForReachable(url: string, timeoutMs = 30_000): Promise<void> 
     }
     await new Promise((r) => setTimeout(r, 250));
   }
+  throw new Error(
+    `Dev server at ${url} did not respond within ${Math.round(timeoutMs / 1000)}s. ` +
+      `Make sure \`pnpm dev:web\` is running (or use \`pnpm dev\`).`,
+  );
 }
 
-async function createWindow(): Promise<void> {
+async function createWindow(): Promise<BrowserWindow | null> {
   const url = await resolveAppUrl();
-  if (isDev) await waitForReachable(url);
+  currentUrl = url;
+  if (isDev) {
+    try {
+      await waitForReachable(url);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      await dialog.showMessageBox({
+        type: "error",
+        title: "The Manager — dev server unreachable",
+        message,
+      });
+      isQuitting = true;
+      app.quit();
+      return null;
+    }
+  }
 
   const win = new BrowserWindow({
     width: 1280,
@@ -49,9 +73,50 @@ async function createWindow(): Promise<void> {
     },
   });
 
+  // Intercept the red-dot close: hide the window so the app keeps living in
+  // the tray. The user can explicitly quit via the tray's "Quit" item, which
+  // sets `isQuitting` before calling `app.quit()`.
+  win.on("close", (e) => {
+    if (!isQuitting) {
+      e.preventDefault();
+      win.hide();
+    }
+  });
+  win.on("closed", () => {
+    if (mainWindow === win) mainWindow = null;
+  });
+
   win.once("ready-to-show", () => win.show());
-  await win.loadURL(url);
+  try {
+    await win.loadURL(url);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    await dialog.showMessageBox({
+      type: "error",
+      title: "The Manager — failed to load app",
+      message: `${message}\n\nIs the dev server running at ${url}?`,
+    });
+    isQuitting = true;
+    app.quit();
+    return null;
+  }
+
+  mainWindow = win;
+  return win;
 }
+
+async function showMainWindow(): Promise<void> {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.show();
+    mainWindow.focus();
+    return;
+  }
+  await createWindow();
+}
+
+app.on("before-quit", () => {
+  isQuitting = true;
+});
 
 app.whenReady().then(async () => {
   // Privileged ops that genuinely need Electron (cannot be done over HTTP).
@@ -63,15 +128,83 @@ app.whenReady().then(async () => {
     return result.canceled ? null : (result.filePaths[0] ?? null);
   });
 
+  ipcMain.handle("the-manager:get-app-info", () => {
+    const url = currentUrl ?? "";
+    let port: number | null = null;
+    if (!isDev) port = getCurrentServerPort();
+    if (port === null && url) {
+      const match = url.match(/:(\d+)/);
+      if (match) port = Number(match[1]);
+    }
+    return { url, port, isDev, isPackaged: app.isPackaged };
+  });
+
+  ipcMain.handle(
+    "the-manager:restart-server",
+    async (_event, args?: { preferredPort?: number }) => {
+      if (isDev) {
+        return {
+          ok: false,
+          message:
+            "In dev mode the Next.js server is owned by `pnpm dev:web`. " +
+            "Change the port there and relaunch the desktop app.",
+          url: currentUrl,
+        };
+      }
+      const port = await restartEmbeddedServer({ preferredPort: args?.preferredPort });
+      currentUrl = `http://localhost:${port}`;
+      rebuildTrayMenu();
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        await mainWindow.loadURL(currentUrl);
+      }
+      return { ok: true, url: currentUrl };
+    },
+  );
+
+  ipcMain.handle("the-manager:quit-app", () => {
+    isQuitting = true;
+    app.quit();
+  });
+
   await createWindow();
 
+  setupTray({
+    getUrl: () => currentUrl ?? "",
+    getMainWindow: () => mainWindow,
+    isPackaged: app.isPackaged,
+    onRestartServer: () => {
+      if (isDev) return;
+      void (async () => {
+        const port = await restartEmbeddedServer();
+        currentUrl = `http://localhost:${port}`;
+        rebuildTrayMenu();
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          await mainWindow.loadURL(currentUrl);
+        }
+      })();
+    },
+    onOpenPreferences: () => {
+      void (async () => {
+        await showMainWindow();
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send("the-manager:open-preferences");
+        }
+      })();
+    },
+    onQuit: () => {
+      isQuitting = true;
+      app.quit();
+    },
+  });
+
   app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      void createWindow();
-    }
+    void showMainWindow();
   });
 });
 
+// With a tray icon we want the app to keep running even when every window is
+// closed (the user reopens via the tray). Quit is only triggered explicitly
+// from the tray's "Quit" item, which flips `isQuitting` before `app.quit()`.
 app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") app.quit();
+  // no-op
 });

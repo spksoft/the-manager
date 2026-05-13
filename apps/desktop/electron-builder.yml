@@ -4,6 +4,7 @@ directories:
   output: release
 files:
   - dist/**/*
+  - assets/**/*
   - package.json
 extraResources:
   # In Phase 2 we'll add the prebuilt apps/web here so startEmbeddedServer can find it.

@@ -15,8 +15,25 @@
  * surface early rather than as wrong-shape responses.
  */
 
+export interface AppInfo {
+  url: string;
+  port: number | null;
+  isDev: boolean;
+  isPackaged: boolean;
+}
+
+export interface RestartResult {
+  ok: boolean;
+  url: string | null;
+  message?: string;
+}
+
 type Bridge = {
   pickDirectory(): Promise<string | null>;
+  getAppInfo(): Promise<AppInfo>;
+  restartServer(preferredPort?: number): Promise<RestartResult>;
+  quit(): Promise<void>;
+  onOpenPreferences(cb: () => void): () => void;
 };
 
 declare global {
@@ -43,6 +60,24 @@ export const transport = {
     // Web surface uses the in-app DirectoryPickerDialog instead — opening that
     // dialog is React-state and lives in the calling component.
     return null;
+  },
+
+  /** Electron-only — returns null on web. */
+  async getAppInfo(): Promise<AppInfo | null> {
+    const bridge = getBridge();
+    return bridge ? bridge.getAppInfo() : null;
+  },
+
+  async restartServer(preferredPort?: number): Promise<RestartResult | null> {
+    const bridge = getBridge();
+    return bridge ? bridge.restartServer(preferredPort) : null;
+  },
+
+  /** Subscribes to tray "Preferences…" clicks. Returns unsubscribe. No-op on web. */
+  onOpenPreferences(cb: () => void): () => void {
+    const bridge = getBridge();
+    if (!bridge) return () => {};
+    return bridge.onOpenPreferences(cb);
   },
 
   hasBridge(): boolean {

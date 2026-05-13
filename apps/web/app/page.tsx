@@ -16,6 +16,7 @@ import { ProjectWorkspace } from "../components/ProjectWorkspace";
 import { SettingsPanel } from "../components/SettingsPanel";
 import { type ActiveView, Sidebar } from "../components/Sidebar";
 import { useProjects, useUiState } from "../lib/hooks";
+import { transport } from "../lib/transport";
 
 export default function HomePage() {
   const { data: uiState, patchUiState } = useUiState();
@@ -42,6 +43,9 @@ export default function HomePage() {
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, []);
+
+  // Electron tray's "Preferences…" item asks the renderer to open Settings.
+  useEffect(() => transport.onOpenPreferences(() => setSettingsOpen(true)), []);
 
   // If the viewport grows past the md breakpoint, the persistent sidebar takes
   // over — close the mobile sheet so backdrop/scroll-lock don't linger.

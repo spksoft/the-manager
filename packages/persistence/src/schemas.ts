@@ -100,6 +100,13 @@ export const SettingsSchema = z.object({
       .nullable(),
     /** Free-form feature flags for in-development features. */
     flags: z.record(z.boolean()),
+    network: z.object({
+      // null = use the desktop's compiled-in DEFAULT_PORT (chosen the first
+      // time the embedded server is started, then persisted so the URL stays
+      // stable across launches). Range matches the IPv4 user/ephemeral range
+      // that doesn't require elevated permissions.
+      preferredPort: z.number().int().min(1024).max(65535).nullable(),
+    }),
   }),
 });
 export type SettingsFile = z.infer<typeof SettingsSchema>;

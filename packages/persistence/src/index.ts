@@ -4,6 +4,7 @@ export * from "./repo/agent-repo";
 export * from "./repo/asset-repo";
 export * from "./repo/file-draft-repo";
 export * from "./repo/project-repo";
+export * from "./repo/settings-repo";
 export * from "./repo/task-repo";
 export * from "./repo/transcript-repo";
 export * from "./repo/ui-state-repo";

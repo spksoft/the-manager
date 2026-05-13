@@ -1,25 +1,21 @@
 import "server-only";
-import { JsonStore, paths, SettingsSchema } from "@the-manager/persistence";
+import { createSettingsStore } from "@the-manager/persistence";
 import { z } from "zod";
 import { handleErr, jsonOk, parseJson } from "../../../lib/api";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-const defaultSettings = () => ({
-  version: 1 as const,
-  data: {
-    recentProjectIds: [] as string[],
-    windowState: null,
-    flags: {} as Record<string, boolean>,
-  },
-});
-
-const store = new JsonStore(paths.settings(), SettingsSchema, defaultSettings);
+const store = createSettingsStore();
 
 const PatchBody = z.object({
   recentProjectIds: z.array(z.string().uuid()).optional(),
   flags: z.record(z.boolean()).optional(),
+  network: z
+    .object({
+      preferredPort: z.number().int().min(1024).max(65535).nullable(),
+    })
+    .optional(),
 });
 
 export async function GET() {
@@ -39,6 +35,7 @@ export async function PUT(req: Request) {
         ...current.data,
         recentProjectIds: body.recentProjectIds ?? current.data.recentProjectIds,
         flags: body.flags ? { ...current.data.flags, ...body.flags } : current.data.flags,
+        network: body.network ? { ...current.data.network, ...body.network } : current.data.network,
       },
     }));
     return jsonOk(next);

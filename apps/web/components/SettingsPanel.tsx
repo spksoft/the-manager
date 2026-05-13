@@ -4,6 +4,7 @@ import type { DriverId } from "@the-manager/shared";
 import { Button, cn, Sheet } from "@the-manager/ui";
 import { useEffect, useState } from "react";
 import { useSettings } from "../lib/hooks";
+import { transport } from "../lib/transport";
 import { ErrorBanner } from "./ErrorBanner";
 
 interface SettingsPanelProps {
@@ -27,6 +28,31 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
   const [saving, setSaving] = useState(false);
   const [savedJustNow, setSavedJustNow] = useState(false);
   const [saveErr, setSaveErr] = useState<string | null>(null);
+
+  // Network section — only meaningful inside Electron.
+  const [appInfo, setAppInfo] = useState<{
+    url: string;
+    port: number | null;
+    isDev: boolean;
+  } | null>(null);
+  const [portInput, setPortInput] = useState<string>("");
+  const [restarting, setRestarting] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    if (!transport.hasBridge()) return;
+    void transport.getAppInfo().then((info) => {
+      if (!info) return;
+      setAppInfo({ url: info.url, port: info.port, isDev: info.isDev });
+    });
+  }, [open]);
+
+  useEffect(() => {
+    if (!open || !settings) return;
+    const persisted = settings.data.network.preferredPort;
+    if (persisted !== null) setPortInput(String(persisted));
+    else if (appInfo?.port) setPortInput(String(appInfo.port));
+  }, [open, settings, appInfo]);
 
   // Sync from server settings — read defaultDriver from flags
   useEffect(() => {
@@ -69,6 +95,39 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
       setSaveErr(e instanceof Error ? e.message : String(e));
     } finally {
       setSaving(false);
+    }
+  };
+
+  const saveNetwork = async () => {
+    setSaveErr(null);
+    const n = Number(portInput);
+    if (!Number.isInteger(n) || n < 1024 || n > 65535) {
+      setSaveErr("Port must be an integer between 1024 and 65535.");
+      return;
+    }
+    setRestarting(true);
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ network: { preferredPort: n } }),
+      });
+      if (!res.ok) {
+        const body = (await res.json()) as { message?: string };
+        throw new Error(body.message ?? `HTTP ${res.status}`);
+      }
+      await mutate();
+      // In Electron prod we can hot-restart the embedded server with the new
+      // port; the dev surface and a plain browser tab just save the value.
+      if (transport.hasBridge() && appInfo && !appInfo.isDev) {
+        const result = await transport.restartServer(n);
+        if (result?.url) setAppInfo({ ...appInfo, url: result.url, port: n });
+        if (result && !result.ok && result.message) setSaveErr(result.message);
+      }
+    } catch (e) {
+      setSaveErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRestarting(false);
     }
   };
 
@@ -178,6 +237,52 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
             </div>
           </div>
         </section>
+
+        {transport.hasBridge() && (
+          <section className="mt-7 flex flex-col gap-3">
+            <div>
+              <h3 className="text-sm font-medium text-zinc-200">Network</h3>
+              <p className="mt-0.5 text-xs text-zinc-500">
+                Port the desktop app's embedded server listens on. Used by the tray's "Open in
+                Browser" link so other browsers/devices can reach the same app.
+              </p>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label htmlFor="settings-port" className="text-xs text-zinc-400">
+                Port
+              </label>
+              <input
+                id="settings-port"
+                type="number"
+                inputMode="numeric"
+                min={1024}
+                max={65535}
+                value={portInput}
+                onChange={(e) => setPortInput(e.target.value)}
+                disabled={restarting || (appInfo?.isDev ?? false)}
+                className="w-32 rounded-md border border-zinc-800 bg-zinc-900/60 px-2 py-1.5 font-mono text-sm text-zinc-100 focus:border-emerald-500/40 focus:outline-none disabled:opacity-50"
+              />
+              {appInfo?.isDev && (
+                <p className="text-xs text-zinc-500">
+                  Dev mode — port is fixed to whatever{" "}
+                  <code className="font-mono">pnpm dev:web</code> launched on. Persisted value
+                  applies on the next packaged-app launch.
+                </p>
+              )}
+              {appInfo?.url && (
+                <p className="text-xs text-zinc-500">
+                  Currently serving at{" "}
+                  <code className="font-mono text-zinc-300">{appInfo.url}</code>
+                </p>
+              )}
+            </div>
+            <div className="flex items-center justify-end">
+              <Button onClick={saveNetwork} disabled={restarting || (appInfo?.isDev ?? false)}>
+                {restarting ? "Restarting…" : "Save & Restart Server"}
+              </Button>
+            </div>
+          </section>
+        )}
 
         <section className="mt-7 flex flex-col gap-2">
           <h3 className="text-sm font-medium text-zinc-200">Storage root</h3>
