@@ -59,7 +59,7 @@ async function resolveCwd(projectId: ProjectId): Promise<string> {
   if (projectId === MANAGER_PROJECT_ID) {
     const cwd = paths.managerCwd();
     await mkdir(cwd, { recursive: true });
-    await ensureManagerMcpSettings(cwd);
+    await ensureManagerWorkspace(cwd);
     return cwd;
   }
   const project = await repos.projects.get(projectId);
@@ -67,24 +67,27 @@ async function resolveCwd(projectId: ProjectId): Promise<string> {
 }
 
 /**
- * Ensure the Manager's cwd contains a `.mcp.json` that wires the in-process
- * MCP bridge (`/api/mcp`). Claude Code reads project-scoped MCP servers from
- * `.mcp.json` — NOT from `.claude/settings.local.json`, which carries a
- * different schema (permissions / env / etc.) and silently ignores
- * `mcpServers` entries.
+ * One-stop bootstrap for the Manager's cwd. Idempotent — safe to call on
+ * every Manager spawn. Performs three things:
  *
- * We merge non-destructively so the user can hand-add more servers without
- * having them overwritten on every Manager spawn. The bridge URL defaults to
- * `http://localhost:3000/api/mcp`; override via `THE_MANAGER_MCP_URL`.
+ *   1. Writes / merges `.mcp.json` so Claude Code's MCP client connects to our
+ *      in-process bridge (`/api/mcp`). Project-scoped MCP config lives in
+ *      `.mcp.json`, NOT `.claude/settings.local.json` (the latter has a
+ *      different schema and silently ignores `mcpServers`).
+ *   2. Writes `CLAUDE.md` if absent — this is the operating brief Claude reads
+ *      on startup. Tells the Manager what it is, which MCP tools it has, and
+ *      how to coordinate across projects. We never overwrite an existing
+ *      CLAUDE.md so the user is free to customise.
+ *   3. Strips any stale `mcpServers` entry from `.claude/settings.local.json`
+ *      that older versions of this app wrote there by mistake.
  *
- * If a stale `.claude/settings.local.json` exists from an earlier version that
- * wrote `mcpServers` there, we strip the entry so it doesn't mislead anyone
- * grepping the file.
+ * The bridge URL defaults to `http://localhost:3000/api/mcp`; override via
+ * `THE_MANAGER_MCP_URL` (e.g. when the web server runs on a non-default port).
  */
-async function ensureManagerMcpSettings(cwd: string): Promise<void> {
+async function ensureManagerWorkspace(cwd: string): Promise<void> {
   const url = process.env.THE_MANAGER_MCP_URL ?? "http://localhost:3000/api/mcp";
 
-  // Primary: .mcp.json at the cwd root.
+  // 1. .mcp.json — merge our entry, keep anything else the user added by hand.
   const mcpFile = join(cwd, ".mcp.json");
   let existing: Record<string, unknown> = {};
   try {
@@ -99,8 +102,21 @@ async function ensureManagerMcpSettings(cwd: string): Promise<void> {
   existing.mcpServers = servers;
   await writeFile(mcpFile, `${JSON.stringify(existing, null, 2)}\n`, "utf8");
 
-  // Cleanup: earlier versions misplaced the entry inside settings.local.json.
-  // Strip it so the file's mcpServers key doesn't mislead future readers.
+  // 2. CLAUDE.md — operating brief for the Manager agent. Only write if missing
+  // so user edits survive.
+  const claudeMdFile = join(cwd, "CLAUDE.md");
+  let claudeMdExists = false;
+  try {
+    await readFile(claudeMdFile, "utf8");
+    claudeMdExists = true;
+  } catch {
+    /* not present — we'll write it */
+  }
+  if (!claudeMdExists) {
+    await writeFile(claudeMdFile, MANAGER_CLAUDE_MD, "utf8");
+  }
+
+  // 3. Strip the misplaced mcpServers entry from any old settings.local.json.
   const staleFile = join(cwd, ".claude", "settings.local.json");
   try {
     const raw = await readFile(staleFile, "utf8");
@@ -113,6 +129,59 @@ async function ensureManagerMcpSettings(cwd: string): Promise<void> {
     /* missing or unreadable — nothing to clean up */
   }
 }
+
+/**
+ * Operating brief seeded into the Manager's cwd as `CLAUDE.md`. Claude Code
+ * picks this up automatically on startup. Kept short and behavioral — long
+ * directives get ignored.
+ */
+const MANAGER_CLAUDE_MD = `# The Manager
+
+You are the **Manager** agent inside *The Manager*, a meta-agent app that
+coordinates other Claude Code sessions across the user's registered projects.
+Your job is to listen to what the user wants done, figure out which project(s)
+it touches, and dispatch the work through the per-project agents — not to edit
+project files yourself from this cwd.
+
+## Tools you have here
+
+The MCP server **\`the-manager\`** is wired up via \`.mcp.json\` in this cwd.
+It exposes four tools:
+
+- **\`list_projects()\`** — every project the user has registered. Returns id,
+  name, path, defaultDriver. Call this first when you need to resolve a
+  project by its short name.
+- **\`get_project_status(id)\`** — \`{ alive, lastActivityAt }\` for a
+  project's claude session. \`alive: false\` means the user hasn't opened that
+  project's terminal in the UI yet; you cannot send to it until they do.
+- **\`send_to_project(id, text)\`** — writes \`text\` (plus Enter) into a
+  project's interactive terminal as if the user typed it. This is how you
+  delegate.
+- **\`read_project_terminal(id, lines?)\`** — tail of the project agent's
+  recent pty output. Use this to check on progress before following up.
+
+## Operating principles
+
+- **Coordinate, don't duplicate.** Each per-project agent has its own
+  CLAUDE.md and tool access scoped to that project. Don't open or edit project
+  files from this cwd — ask the project agent.
+- **List before acting.** If the user names a project ambiguously, call
+  \`list_projects\` and confirm the id.
+- **Check liveness before sending.** Call \`get_project_status\` before
+  \`send_to_project\`. If a session isn't alive, tell the user to open that
+  project's terminal in the UI; you can't spawn it for them.
+- **Read before re-sending.** After dispatching non-trivial work, use
+  \`read_project_terminal\` before sending a follow-up — the project agent's
+  last reply usually answers the next question.
+- **Treat the terminal as visible to the user.** Whatever you send via
+  \`send_to_project\` is displayed in their UI; don't echo secrets.
+
+## Your own workspace
+
+This cwd (\`~/.the-manager/manager/cwd\`) is your private scratch space — fine
+for notes, research output, intermediate files, anything not tied to a specific
+project. Project work goes through the project agents.
+`;
 
 async function createSession(projectId: ProjectId, cols: number, rows: number): Promise<Session> {
   const cwd = await resolveCwd(projectId);

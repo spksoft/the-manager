@@ -5,7 +5,7 @@ import type { ProjectId } from "@the-manager/shared";
 import { ValidationError } from "@the-manager/shared";
 import { z } from "zod";
 import { handleErr, jsonErr, jsonOk, parseJson } from "../../../../../lib/api";
-import { repos } from "../../../../../lib/runtime";
+import { resolveProjectCwd } from "../../../../../lib/cwd";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -34,8 +34,8 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
     const { id } = await ctx.params;
     const url = new URL(req.url);
     const relPath = url.searchParams.get("path") ?? "";
-    const project = await repos.projects.get(id as ProjectId);
-    const abs = safeResolve(project.path, relPath);
+    const root = await resolveProjectCwd(id as ProjectId);
+    const abs = safeResolve(root, relPath);
     const s = await stat(abs);
     if (s.isDirectory()) {
       const entries = await readdir(abs, { withFileTypes: true });
@@ -79,8 +79,8 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
   try {
     const { id } = await ctx.params;
     const body = await parseJson(req, PutBody);
-    const project = await repos.projects.get(id as ProjectId);
-    const abs = safeResolve(project.path, body.path);
+    const root = await resolveProjectCwd(id as ProjectId);
+    const abs = safeResolve(root, body.path);
     if (body.mtime) {
       try {
         const s = await stat(abs);
@@ -115,8 +115,8 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   try {
     const { id } = await ctx.params;
     const body = await parseJson(req, PostBody);
-    const project = await repos.projects.get(id as ProjectId);
-    const abs = safeResolve(project.path, body.path);
+    const root = await resolveProjectCwd(id as ProjectId);
+    const abs = safeResolve(root, body.path);
     try {
       await mkdir(abs, { recursive: false });
     } catch (err) {
@@ -140,8 +140,8 @@ export async function DELETE(req: Request, ctx: { params: Promise<{ id: string }
   try {
     const { id } = await ctx.params;
     const body = await parseJson(req, DeleteBody);
-    const project = await repos.projects.get(id as ProjectId);
-    const abs = safeResolve(project.path, body.path);
+    const root = await resolveProjectCwd(id as ProjectId);
+    const abs = safeResolve(root, body.path);
     const s = await stat(abs);
     if (s.isDirectory() && !body.recursive) {
       throw new ValidationError(`refusing to delete a directory without recursive: true`);
@@ -163,9 +163,9 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
   try {
     const { id } = await ctx.params;
     const body = await parseJson(req, PatchBody);
-    const project = await repos.projects.get(id as ProjectId);
-    const absFrom = safeResolve(project.path, body.from);
-    const absTo = safeResolve(project.path, body.to);
+    const root = await resolveProjectCwd(id as ProjectId);
+    const absFrom = safeResolve(root, body.from);
+    const absTo = safeResolve(root, body.to);
     try {
       await stat(absTo);
       return jsonErr(409, "EXISTS", `destination already exists: ${body.to}`);
