@@ -5,6 +5,7 @@ import { Sheet } from "@the-manager/ui";
 import { useEffect, useMemo, useState } from "react";
 import { useSWRConfig } from "swr";
 import { AssetBrowser } from "../components/AssetBrowser";
+import { BottomTerminalDrawer } from "../components/BottomTerminalDrawer";
 import { CommandPalette } from "../components/CommandPalette";
 import { EditProjectDialog } from "../components/EditProjectDialog";
 import { ManagerRequestBroker } from "../components/ManagerRequestBroker";
@@ -98,48 +99,54 @@ export default function HomePage() {
   };
 
   return (
-    <div className="flex h-screen overflow-hidden">
-      <Sidebar {...sidebarProps} />
-      <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen} side="left" ariaLabel="Navigation">
-        <Sidebar {...sidebarProps} variant="drawer" onNavigate={() => setSidebarOpen(false)} />
-      </Sheet>
+    <div className="flex h-screen flex-col overflow-hidden">
+      <div className="flex min-h-0 flex-1 overflow-hidden">
+        <Sidebar {...sidebarProps} />
+        <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen} side="left" ariaLabel="Navigation">
+          <Sidebar {...sidebarProps} variant="drawer" onNavigate={() => setSidebarOpen(false)} />
+        </Sheet>
 
-      <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        <header className="flex flex-shrink-0 items-center justify-between gap-2 border-b border-zinc-800 px-3 py-3 md:px-8 md:py-5">
-          <div className="flex min-w-0 items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setSidebarOpen(true)}
-              aria-label="Open navigation"
-              className="-ml-1 flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-md text-zinc-300 hover:bg-zinc-800/60 md:hidden"
-            >
-              <span aria-hidden className="text-lg leading-none">
-                ☰
-              </span>
-            </button>
-            <div className="min-w-0">
-              <h1 className="truncate text-base font-semibold tracking-tight text-zinc-50 md:text-xl">
-                {headerTitle}
-              </h1>
-              {headerSub && (
-                <p className="mt-0.5 hidden truncate text-sm text-zinc-500 md:block">{headerSub}</p>
-              )}
+        <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          <header className="flex flex-shrink-0 items-center justify-between gap-2 border-b border-zinc-800 px-3 py-3 md:px-8 md:py-5">
+            <div className="flex min-w-0 items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setSidebarOpen(true)}
+                aria-label="Open navigation"
+                className="-ml-1 flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-md text-zinc-300 hover:bg-zinc-800/60 md:hidden"
+              >
+                <span aria-hidden className="text-lg leading-none">
+                  ☰
+                </span>
+              </button>
+              <div className="min-w-0">
+                <h1 className="truncate text-base font-semibold tracking-tight text-zinc-50 md:text-xl">
+                  {headerTitle}
+                </h1>
+                {headerSub && (
+                  <p className="mt-0.5 hidden truncate text-sm text-zinc-500 md:block">
+                    {headerSub}
+                  </p>
+                )}
+              </div>
             </div>
-          </div>
-          <div className="flex flex-shrink-0 items-center gap-3 text-xs text-zinc-500">
-            <span className="hidden sm:inline">
-              {projects.length} project{projects.length !== 1 ? "s" : ""}
-            </span>
-            <NotificationsBell projects={projects} onJump={(target) => setActiveView(target)} />
-          </div>
-        </header>
+            <div className="flex flex-shrink-0 items-center gap-3 text-xs text-zinc-500">
+              <span className="hidden sm:inline">
+                {projects.length} project{projects.length !== 1 ? "s" : ""}
+              </span>
+              <NotificationsBell projects={projects} onJump={(target) => setActiveView(target)} />
+            </div>
+          </header>
 
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-3 py-3 md:px-8 md:py-6">
-          {activeView.type === "manager" && <ManagerSurface />}
-          {activeView.type === "assets" && <AssetBrowser />}
-          {activeView.type === "project" && <ProjectWorkspace projectId={activeView.id} />}
-        </div>
-      </main>
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-3 py-3 md:px-8 md:py-6">
+            {activeView.type === "manager" && <ManagerSurface />}
+            {activeView.type === "assets" && <AssetBrowser />}
+            {activeView.type === "project" && <ProjectWorkspace projectId={activeView.id} />}
+          </div>
+        </main>
+      </div>
+
+      <BottomTerminalDrawer />
 
       <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />
       <NewProjectDialog

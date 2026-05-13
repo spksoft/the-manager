@@ -124,11 +124,17 @@ export const ActiveViewSchema = z.union([
 ]);
 export type ActiveView = z.infer<typeof ActiveViewSchema>;
 
-export const ProjectTabSchema = z.enum(["agent", "files", "git"]);
+export const ProjectTabSchema = z.enum(["agent", "files", "git", "terminal"]);
 export type ProjectTab = z.infer<typeof ProjectTabSchema>;
 
 export const ManagerTabSchema = z.enum(["agent", "files"]);
 export type ManagerTab = z.infer<typeof ManagerTabSchema>;
+
+export const TerminalDrawerSchema = z.object({
+  expanded: z.boolean(),
+  heightPx: z.number().int().positive(),
+});
+export type TerminalDrawerState = z.infer<typeof TerminalDrawerSchema>;
 
 export const UiStateSchema = z.object({
   version: z.literal(1),
@@ -139,6 +145,7 @@ export const UiStateSchema = z.object({
     // Per-project draft of the next commit message. Survives reloads so the
     // user doesn't lose a half-typed message (or a Claude-generated draft).
     commitMessageDraftByProject: z.record(z.string()),
+    terminalDrawer: TerminalDrawerSchema,
   }),
 });
 export type UiStateFile = z.infer<typeof UiStateSchema>;

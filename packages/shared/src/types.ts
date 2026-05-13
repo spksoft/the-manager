@@ -1,4 +1,4 @@
-export type DriverId = "claude" | "codex" | "gemini";
+export type DriverId = "claude" | "codex" | "gemini" | "shell";
 
 export type AgentStatus = "starting" | "running" | "exited" | "killed" | "error";
 

@@ -2,7 +2,7 @@ import "server-only";
 import { mkdir, stat } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 import { paths } from "@the-manager/persistence";
-import { type DriverId, newId, ValidationError } from "@the-manager/shared";
+import { newId, ValidationError } from "@the-manager/shared";
 import { z } from "zod";
 import { handleErr, jsonOk, parseJson } from "../../../lib/api";
 import { repos } from "../../../lib/runtime";
@@ -60,7 +60,7 @@ export async function POST(req: Request) {
       id,
       name: body.name,
       path: body.path,
-      defaultDriver: body.defaultDriver as DriverId,
+      defaultDriver: body.defaultDriver,
       createdAt: now.toISOString(),
       lastUsedAt: null,
       ephemeral,

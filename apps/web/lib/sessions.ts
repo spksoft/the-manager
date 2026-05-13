@@ -5,6 +5,12 @@ import type { AgentHandle } from "@the-manager/drivers";
 import { ClaudeDriver } from "@the-manager/drivers";
 import { paths } from "@the-manager/persistence";
 import type { ProjectId } from "@the-manager/shared";
+import {
+  appendChunk,
+  attach as attachRecording,
+  type DataSubscriber,
+  type ExitSubscriber,
+} from "./pty-recording";
 import { MANAGER_PROJECT_ID, repos } from "./runtime";
 
 /**
@@ -19,8 +25,7 @@ import { MANAGER_PROJECT_ID, repos } from "./runtime";
  * updates.
  */
 
-export type DataSubscriber = (chunk: string) => void;
-export type ExitSubscriber = () => void;
+export type { DataSubscriber, ExitSubscriber } from "./pty-recording";
 
 export interface Session {
   handle: AgentHandle;
@@ -53,9 +58,6 @@ export interface SessionStatus {
   /** Bumped on each working → idle transition; the UI uses this to fire a notification. */
   readyAt: string | null;
 }
-
-/** Cap the in-memory recording so a very chatty session doesn't grow forever. */
-const MAX_RECORDING_BYTES = 1_000_000;
 
 /**
  * How long the pty has to stay quiet after the agent was last producing output
@@ -392,13 +394,8 @@ async function createSession(projectId: ProjectId, cols: number, rows: number): 
   };
 
   handle.on("data", ({ chunk }) => {
-    session.recording.push(chunk);
-    session.recordingBytes += chunk.length;
+    appendChunk(session, chunk);
     session.lastActivityAt = new Date().toISOString();
-    while (session.recordingBytes > MAX_RECORDING_BYTES && session.recording.length > 1) {
-      const dropped = session.recording.shift();
-      if (dropped) session.recordingBytes -= dropped.length;
-    }
     for (const sub of session.dataSubs) sub(chunk);
     if (session.state === "working") scheduleIdleCheck(session);
   });
@@ -513,22 +510,13 @@ export function listStatuses(): Record<string, SessionStatus> {
 /**
  * Snapshot the current recording and subscribe to live output in a single
  * synchronous step — guarantees no chunk is duplicated or missed on attach.
- * The exit callback fires once when the pty terminates so the caller can
- * tear its transport down cleanly.
+ * Thin wrapper around the shared `attach` helper kept for back-compat with
+ * callers that import from `./sessions`.
  */
 export function attach(
   session: Session,
   onData: DataSubscriber,
   onExit: ExitSubscriber,
 ): { initial: string[]; unsubscribe: () => void } {
-  const initial = session.recording.slice();
-  session.dataSubs.add(onData);
-  session.exitSubs.add(onExit);
-  return {
-    initial,
-    unsubscribe: () => {
-      session.dataSubs.delete(onData);
-      session.exitSubs.delete(onExit);
-    },
-  };
+  return attachRecording(session, onData, onExit);
 }

@@ -16,6 +16,7 @@ import type {
   ProjectRow,
   ProjectTab,
   SettingsFile,
+  TerminalDrawerState,
   UiStateData,
 } from "@the-manager/persistence";
 import useSWR, { useSWRConfig } from "swr";
@@ -504,13 +505,17 @@ export function useSettings() {
 // ---------------------------------------------------------------------------
 const UI_STATE_KEY = "/api/ui-state";
 
+export type UiStatePatch = Partial<Omit<UiStateData, "terminalDrawer">> & {
+  terminalDrawer?: Partial<TerminalDrawerState>;
+};
+
 export function useUiState() {
   const swr = useSWR<UiStateData>(UI_STATE_KEY, fetcher);
   const { mutate } = useSWRConfig();
 
   // Optimistically merge `partial` into the cached value and PUT to the server.
   // Server's response wins for the cache once it lands.
-  const patchUiState = async (partial: Partial<UiStateData>): Promise<void> => {
+  const patchUiState = async (partial: UiStatePatch): Promise<void> => {
     const current = swr.data;
     if (current) {
       const next: UiStateData = {
@@ -523,6 +528,10 @@ export function useUiState() {
         commitMessageDraftByProject: {
           ...current.commitMessageDraftByProject,
           ...(partial.commitMessageDraftByProject ?? {}),
+        },
+        terminalDrawer: {
+          ...current.terminalDrawer,
+          ...(partial.terminalDrawer ?? {}),
         },
       };
       void mutate(UI_STATE_KEY, next, { revalidate: false });
@@ -540,7 +549,7 @@ export function useUiState() {
 
 // Convenience: set the active project tab without re-typing the merge.
 export async function setProjectTab(
-  patchUiState: (partial: Partial<UiStateData>) => Promise<void>,
+  patchUiState: (partial: UiStatePatch) => Promise<void>,
   projectId: string,
   tab: ProjectTab,
 ): Promise<void> {
@@ -548,18 +557,25 @@ export async function setProjectTab(
 }
 
 export async function setManagerTab(
-  patchUiState: (partial: Partial<UiStateData>) => Promise<void>,
+  patchUiState: (partial: UiStatePatch) => Promise<void>,
   tab: ManagerTab,
 ): Promise<void> {
   await patchUiState({ activeTabManager: tab });
 }
 
 export async function setCommitMessageDraft(
-  patchUiState: (partial: Partial<UiStateData>) => Promise<void>,
+  patchUiState: (partial: UiStatePatch) => Promise<void>,
   projectId: string,
   message: string,
 ): Promise<void> {
   await patchUiState({ commitMessageDraftByProject: { [projectId]: message } });
+}
+
+export async function setTerminalDrawer(
+  patchUiState: (partial: UiStatePatch) => Promise<void>,
+  partial: Partial<TerminalDrawerState>,
+): Promise<void> {
+  await patchUiState({ terminalDrawer: partial });
 }
 
 // ---------------------------------------------------------------------------

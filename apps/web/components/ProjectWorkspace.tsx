@@ -1,17 +1,20 @@
 "use client";
 
+import type { ProjectTab } from "@the-manager/persistence";
 import { cn } from "@the-manager/ui";
 import { setProjectTab, useProject, useUiState } from "../lib/hooks";
 import { ErrorBanner } from "./ErrorBanner";
 import { FilesTab } from "./FilesTab";
 import { GitTab } from "./GitTab";
+import { TerminalsPanel } from "./TerminalsPanel";
 import { TerminalView } from "./TerminalView";
 
-type Tab = "agent" | "files" | "git";
+type Tab = ProjectTab;
 const TABS: { id: Tab; label: string }[] = [
   { id: "agent", label: "Agent" },
   { id: "files", label: "Files" },
   { id: "git", label: "Git" },
+  { id: "terminal", label: "Terminal" },
 ];
 
 interface ProjectWorkspaceProps {
@@ -59,6 +62,7 @@ export function ProjectWorkspace({ projectId }: ProjectWorkspaceProps) {
         {activeTab === "agent" && <TerminalView projectId={projectId} />}
         {activeTab === "files" && <FilesTab projectId={projectId} />}
         {activeTab === "git" && <GitTab projectId={projectId} />}
+        {activeTab === "terminal" && <TerminalsPanel scope={projectId} />}
       </div>
     </div>
   );

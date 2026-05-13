@@ -2,17 +2,27 @@ import { paths } from "../paths";
 import { type UiStateData, type UiStateFile, UiStateSchema } from "../schemas";
 import { JsonStore } from "../store";
 
+/**
+ * Patch shape: top-level fields are optional, and the `terminalDrawer` sub-object
+ * can also be partial so callers can flip `expanded` without resending `heightPx`.
+ * Record-valued fields (`activeTabByProject`, `commitMessageDraftByProject`) keep
+ * their normal `Record<string, V>` shape and merge per-key.
+ */
+export type UiStatePatch = Partial<Omit<UiStateData, "terminalDrawer">> & {
+  terminalDrawer?: Partial<UiStateData["terminalDrawer"]>;
+};
+
 const defaultData: UiStateData = {
   activeView: { type: "manager" },
   activeTabByProject: {},
   activeTabManager: "agent",
   commitMessageDraftByProject: {},
+  terminalDrawer: { expanded: false, heightPx: 280 },
 };
 
 /**
- * Pre-parse migration: older UI state files don't have
- * `commitMessageDraftByProject`. Fill it with `{}` so the strict schema parses
- * without forcing a version bump for what is effectively an additive field.
+ * Pre-parse migration: older UI state files lack newer additive fields. Fill
+ * them in so the strict schema parses without forcing a version bump.
  * Kept here (not in schemas.ts) because schemas.ts deliberately avoids
  * `.default()` — see the CLAUDE.md note on input/output type divergence.
  */
@@ -22,6 +32,9 @@ function migrate(raw: unknown): unknown {
   if (!file.data || typeof file.data !== "object") return raw;
   if (file.data.commitMessageDraftByProject === undefined) {
     file.data.commitMessageDraftByProject = {};
+  }
+  if (file.data.terminalDrawer === undefined) {
+    file.data.terminalDrawer = { expanded: false, heightPx: 280 };
   }
   return raw;
 }
@@ -37,7 +50,12 @@ export class UiStateRepo {
     UiStateSchema,
     () => ({
       version: 1 as const,
-      data: { ...defaultData, activeTabByProject: {}, commitMessageDraftByProject: {} },
+      data: {
+        ...defaultData,
+        activeTabByProject: {},
+        commitMessageDraftByProject: {},
+        terminalDrawer: { expanded: false, heightPx: 280 },
+      },
     }),
     migrate,
   );
@@ -47,7 +65,7 @@ export class UiStateRepo {
     return file.data;
   }
 
-  async patch(partial: Partial<UiStateData>): Promise<UiStateData> {
+  async patch(partial: UiStatePatch): Promise<UiStateData> {
     let next: UiStateData = defaultData;
     await this.store.update((file) => {
       next = {
@@ -60,6 +78,10 @@ export class UiStateRepo {
         commitMessageDraftByProject: {
           ...file.data.commitMessageDraftByProject,
           ...(partial.commitMessageDraftByProject ?? {}),
+        },
+        terminalDrawer: {
+          ...file.data.terminalDrawer,
+          ...(partial.terminalDrawer ?? {}),
         },
       };
       return { ...file, data: next };
