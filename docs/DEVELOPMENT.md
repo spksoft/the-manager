@@ -117,15 +117,6 @@ git push --follow-tags  # push the tag so the release workflow runs
 
 The workflow fails fast if the tag doesn't match `apps/desktop/package.json#version` — keep the bump and tag in sync (the script already does this).
 
-## Pre-commit hooks
-
-Husky installs two hooks from `scripts/hooks/`:
-
-- **pre-commit** — appends a one-line entry to `CHANGELOG.md` from the staged diff.
-- **post-commit** — re-builds the desktop app's compiled `main`/`preload` so an open Electron dev shell stays in sync.
-
-Both are non-interactive and idempotent. If you ever need to bypass them, prefer fixing the underlying issue over `--no-verify`.
-
 ## Filing issues / PRs
 
 - For bugs, include OS, Node version, and the relevant log output (`apps/web` runs in your terminal in dev; the Electron main process logs there too).

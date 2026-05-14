@@ -156,7 +156,18 @@ export function MicButton({ onResult }: MicButtonProps) {
     rec.onerror = (e) => {
       const code = (e as { error?: string }).error ?? "speech-recognition error";
       // `no-speech` and `aborted` are routine cancellations — don't show as errors.
-      if (code !== "no-speech" && code !== "aborted") setError(code);
+      if (code === "no-speech" || code === "aborted") return;
+      // Map opaque W3C error codes to actionable messages — `network` and
+      // `service-not-allowed` mean the speech *service* (not the mic itself)
+      // is unavailable, which is the typical failure mode in Electron when
+      // on-device recognition can't load.
+      const message =
+        code === "network" || code === "service-not-allowed"
+          ? "Speech service unavailable. The desktop app needs on-device recognition; try the web version or check your network."
+          : code === "not-allowed"
+            ? "Microphone permission denied. Grant access in System Settings → Privacy → Microphone."
+            : code;
+      setError(message);
       // Defer the listening-off state to onend so push-to-talk can restart
       // without flickering the UI between utterances.
     };
@@ -196,10 +207,38 @@ export function MicButton({ onResult }: MicButtonProps) {
     setSupported(getSRCtor() !== null);
   }, []);
 
-  const startListening = useCallback(() => {
+  // In Electron, webkitSpeechRecognition.start() can return cleanly but then
+  // fire `onerror: not-allowed` because the OS mic permission was never
+  // granted. Touching getUserMedia first nudges Chromium / macOS to surface
+  // the prompt and lets us fail fast with a clearer error if it's denied.
+  const ensureMicPermission = useCallback(async (): Promise<string | null> => {
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+      return null; // older browsers — let SR try its own path
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // We don't actually want to keep the stream open — SR opens its own.
+      for (const t of stream.getTracks()) t.stop();
+      return null;
+    } catch (e) {
+      const name = (e as { name?: string }).name ?? "";
+      if (name === "NotAllowedError" || name === "SecurityError") {
+        return "Microphone permission denied. Grant access in System Settings → Privacy → Microphone.";
+      }
+      if (name === "NotFoundError") return "No microphone detected.";
+      return e instanceof Error ? e.message : String(e);
+    }
+  }, []);
+
+  const startListening = useCallback(async (): Promise<boolean> => {
     const rec = recRef.current;
     if (!rec) return false;
     setError(null);
+    const permErr = await ensureMicPermission();
+    if (permErr) {
+      setError(permErr);
+      return false;
+    }
     try {
       rec.start();
       setListening(true);
@@ -213,7 +252,7 @@ export function MicButton({ onResult }: MicButtonProps) {
       setError(msg);
       return false;
     }
-  }, []);
+  }, [ensureMicPermission]);
 
   const stopListening = useCallback(() => {
     const rec = recRef.current;
@@ -227,7 +266,7 @@ export function MicButton({ onResult }: MicButtonProps) {
 
   const toggle = useCallback(() => {
     if (listening) stopListening();
-    else startListening();
+    else void startListening();
   }, [listening, startListening, stopListening]);
 
   // Push-to-talk: hold Ctrl+M to record, release to stop. Captured at the
@@ -242,7 +281,13 @@ export function MicButton({ onResult }: MicButtonProps) {
       if (!isM(e)) return;
       e.preventDefault();
       if (e.repeat || pttActiveRef.current) return;
-      if (startListening()) pttActiveRef.current = true;
+      // Optimistically mark PTT active so a long hold keeps the recogniser
+      // restarting in `onend` even though `startListening` is now async.
+      // If permission is denied we'll flip it back below.
+      pttActiveRef.current = true;
+      void startListening().then((ok) => {
+        if (!ok) pttActiveRef.current = false;
+      });
     };
     const onKeyUp = (e: KeyboardEvent) => {
       // Release on either Ctrl or M lifting — whichever comes first ends PTT.

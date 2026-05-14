@@ -1,12 +1,11 @@
-import { type ChildProcess, spawn } from "node:child_process";
 import { readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { app } from "electron";
+import { app, type UtilityProcess, utilityProcess } from "electron";
 import { getPort } from "get-port-please";
 import { DEFAULT_PORT } from "./config";
 
-let child: ChildProcess | null = null;
+let child: UtilityProcess | null = null;
 let currentPort: number | null = null;
 
 /**
@@ -27,7 +26,7 @@ export async function startEmbeddedServer(): Promise<number> {
     throw new Error("Embedded server already running");
   }
   const port = await pickPort();
-  await spawnChild(port);
+  spawnChild(port);
   await waitForHealth(port, 30_000);
   currentPort = port;
   await persistPortIfChanged(port);
@@ -45,7 +44,7 @@ export async function restartEmbeddedServer(opts?: { preferredPort?: number }): 
   }
   await killChild();
   const port = await pickPort();
-  await spawnChild(port);
+  spawnChild(port);
   await waitForHealth(port, 30_000);
   currentPort = port;
   await persistPortIfChanged(port);
@@ -67,27 +66,32 @@ async function pickPort(): Promise<number> {
   });
 }
 
-async function spawnChild(port: number): Promise<void> {
+function spawnChild(port: number): void {
   // Standalone output for a monorepo lives at <root>/apps/web/server.js, with
   // node_modules hoisted to <root>/. extraResources maps that root to "web/"
   // inside the bundle, so the runtime cwd ends up at .../web/apps/web/.
+  //
+  // We use `utilityProcess.fork` (not `child_process.spawn`) so the embedded
+  // server runs as an Electron utility process. Unlike a spawned Electron
+  // binary with ELECTRON_RUN_AS_NODE, a utility process does not register
+  // with the macOS WindowServer — no stray "exec" tile shows up in the Dock
+  // next to the main app icon.
   const webDir = join(process.resourcesPath, "web", "apps", "web");
-  child = spawn(process.execPath, [join(webDir, "server.js")], {
+  const proc = utilityProcess.fork(join(webDir, "server.js"), [], {
     cwd: webDir,
     env: {
       ...process.env,
       NODE_ENV: "production",
-      // process.execPath is the Electron binary in a packaged build; this
-      // env var makes it act as Node instead of opening another window.
-      ELECTRON_RUN_AS_NODE: "1",
       // Next.js standalone reads PORT/HOSTNAME from env, not flags.
       PORT: String(port),
       HOSTNAME: "127.0.0.1",
     },
     stdio: "inherit",
   });
+  child = proc;
 
-  child.on("exit", (code) => {
+  proc.on("exit", (code) => {
+    if (child === proc) child = null;
     if (code !== 0 && code !== null) {
       // Quit the app if the server falls over — the window has nothing to show.
       app.quit();
@@ -96,20 +100,15 @@ async function spawnChild(port: number): Promise<void> {
 }
 
 async function killChild(): Promise<void> {
-  if (!child || child.killed) {
-    child = null;
-    return;
-  }
+  if (!child) return;
   const dying = child;
   child = null;
   await new Promise<void>((resolve) => {
-    const onExit = () => resolve();
-    dying.once("exit", onExit);
-    dying.kill("SIGTERM");
-    // Hard-kill if SIGTERM doesn't take.
-    setTimeout(() => {
-      if (!dying.killed) dying.kill("SIGKILL");
-    }, 3_000);
+    dying.once("exit", () => resolve());
+    if (!dying.kill()) {
+      // kill() returns false if the process already exited.
+      resolve();
+    }
   });
 }
 
@@ -189,7 +188,7 @@ async function writePreferredPort(port: number): Promise<void> {
 }
 
 app.on("before-quit", () => {
-  if (child && !child.killed) {
-    child.kill("SIGTERM");
+  if (child) {
+    child.kill();
   }
 });

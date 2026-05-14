@@ -30,6 +30,11 @@ extraResources:
 mac:
   category: public.app-category.developer-tools
   icon: assets/icon.png
+  # macOS won't show the microphone TCC prompt unless this string is in the
+  # bundle's Info.plist. Without it the renderer's getUserMedia / Web Speech
+  # API calls fail silently in packaged builds.
+  extendInfo:
+    NSMicrophoneUsageDescription: The Manager uses your microphone for voice input to dictate prompts to agents.
   target:
     - target: dmg
       arch:

@@ -1,13 +1,31 @@
 import { spawnSync } from "node:child_process";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage } from "electron";
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  Menu,
+  nativeImage,
+  session,
+  systemPreferences,
+} from "electron";
 import { devUrl } from "./config";
 import { buildApplicationMenu } from "./menu";
 import { getCurrentServerPort, restartEmbeddedServer, startEmbeddedServer } from "./server";
 import { rebuildTrayMenu, setupTray } from "./tray";
 
 const isDev = !app.isPackaged;
+
+// Web Speech API (`webkitSpeechRecognition`, used by MicButton) is gated behind
+// experimental flags in Electron — Chrome ships it on by default but Electron
+// keeps it off. Enable on-device recognition so the API works without needing
+// Google's cloud key (which Electron doesn't have).
+app.commandLine.appendSwitch(
+  "enable-features",
+  "OnDeviceWebSpeech,OnDeviceWebSpeechAvailable,MediaStreamTrackTransfer",
+);
 
 // macOS Finder launches GUI apps with a stripped PATH (missing Homebrew, user
 // dirs, etc.), so child processes can't find `claude` and other CLI agents the
@@ -170,6 +188,49 @@ app.whenReady().then(async () => {
     // against unpackaged source) point the Dock at our PNG so it doesn't
     // fall back to the generic Electron icon.
     app.dock?.setIcon(appIcon);
+  }
+
+  // Renderer media access (mic, camera) is denied by default in Electron.
+  // Approve `media` and `mediaKeySystem` for our own origin so MicButton's
+  // SpeechRecognition / getUserMedia calls succeed. We scope to localhost +
+  // file:// so a future malicious iframe couldn't piggyback.
+  const isOwnOrigin = (url: string) => {
+    if (!url) return false;
+    if (url.startsWith("file://")) return true;
+    try {
+      const { hostname } = new URL(url);
+      return hostname === "localhost" || hostname === "127.0.0.1";
+    } catch {
+      return false;
+    }
+  };
+  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
+    const url = webContents.getURL();
+    if ((permission === "media" || permission === "mediaKeySystem") && isOwnOrigin(url)) {
+      callback(true);
+      return;
+    }
+    callback(false);
+  });
+  session.defaultSession.setPermissionCheckHandler((_wc, permission, requestingOrigin) => {
+    if (permission === "media" || permission === "mediaKeySystem") {
+      return isOwnOrigin(requestingOrigin);
+    }
+    return false;
+  });
+
+  // macOS gates microphone access behind its own TCC prompt — `getUserMedia`
+  // silently fails until the user has approved it. Trigger the prompt up
+  // front so the first mic click in the renderer doesn't no-op.
+  if (process.platform === "darwin") {
+    try {
+      const status = systemPreferences.getMediaAccessStatus("microphone");
+      if (status === "not-determined") {
+        await systemPreferences.askForMediaAccess("microphone");
+      }
+    } catch {
+      // Best effort — the renderer will surface a clearer error if it fails.
+    }
   }
 
   // Privileged ops that genuinely need Electron (cannot be done over HTTP).
