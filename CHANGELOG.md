@@ -1,5 +1,8 @@
 # Changelog
 
+## 2026-05-14
+- Add release workflow and version bump script to publish DMG builds on tag push
+
 ## 2026-05-13
 - Add app icon and husky hooks for changelog generation and desktop build
 
