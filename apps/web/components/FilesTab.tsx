@@ -4,7 +4,7 @@ import { detectLanguage, MiniEditor } from "@the-manager/editor";
 import type { FileDraftRow } from "@the-manager/persistence";
 import { Button, Sheet } from "@the-manager/ui";
 import { ChevronDown, ChevronRight, FilePlus, FolderPlus, Search, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 import { useSWRConfig } from "swr";
 import { fileIcon, folderIcon } from "../lib/file-icons";
 import type { FileEntry, FileSearchMode } from "../lib/hooks";
@@ -299,6 +299,99 @@ function StaleDialog({ onReload, onSaveAnyway, onClose }: StaleDialogProps) {
 }
 
 // ---------------------------------------------------------------------------
+// NameInputDialog — inline replacement for window.prompt, which Electron
+// disables (returns null), making New file / New folder silently no-op in the
+// desktop app.
+// ---------------------------------------------------------------------------
+interface NameInputDialogProps {
+  title: string;
+  label: string;
+  placeholder?: string;
+  submitLabel: string;
+  onSubmit: (value: string) => Promise<void> | void;
+  onClose: () => void;
+}
+
+function NameInputDialog({
+  title,
+  label,
+  placeholder,
+  submitLabel,
+  onSubmit,
+  onClose,
+}: NameInputDialogProps) {
+  const [value, setValue] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [onClose]);
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    const trimmed = value.trim();
+    if (!trimmed) return;
+    setSubmitting(true);
+    try {
+      await onSubmit(trimmed);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <>
+      <div
+        aria-hidden="true"
+        className="animate-fade-in fixed inset-0 z-40 bg-black/60"
+        onClick={onClose}
+      />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="name-input-dialog-title"
+        className="animate-scale-in fixed left-1/2 top-1/2 z-50 w-[calc(100vw-1.5rem)] max-w-sm -translate-x-1/2 -translate-y-1/2 rounded-xl border border-zinc-800 bg-zinc-950 shadow-2xl"
+      >
+        <form onSubmit={submit} className="flex flex-col gap-3 p-5">
+          <h2 id="name-input-dialog-title" className="text-sm font-semibold text-zinc-100">
+            {title}
+          </h2>
+          <label htmlFor="name-input-dialog-value" className="text-xs text-zinc-400">
+            {label}
+          </label>
+          <input
+            id="name-input-dialog-value"
+            ref={inputRef}
+            type="text"
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            placeholder={placeholder}
+            className="rounded-md border border-zinc-800 bg-zinc-900/60 px-3 py-2 font-mono text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-zinc-600 focus:outline-none"
+          />
+          <div className="flex flex-col-reverse gap-2 pt-1 sm:flex-row sm:justify-end">
+            <Button type="button" variant="ghost" onClick={onClose} disabled={submitting}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={submitting || !value.trim()}>
+              {submitting ? "Working…" : submitLabel}
+            </Button>
+          </div>
+        </form>
+      </div>
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // SearchResults
 // ---------------------------------------------------------------------------
 interface SearchResultsProps {
@@ -404,6 +497,7 @@ export function FilesTab({ projectId }: FilesTabProps) {
   // file is first opened.
   const [draftLoaded, setDraftLoaded] = useState<FileDraftRow | null | undefined>(undefined);
   const [treeOpen, setTreeOpen] = useState(false);
+  const [pendingNew, setPendingNew] = useState<"file" | "folder" | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchMode, setSearchMode] = useState<FileSearchMode>("name");
   const [initialLine, setInitialLine] = useState<number | undefined>(undefined);
@@ -416,42 +510,36 @@ export function FilesTab({ projectId }: FilesTabProps) {
     return Promise.all(unique.map((d) => swrMutate(filesKey(projectId, d))));
   };
 
-  const newFile = async () => {
-    const path = window.prompt("New file (project-relative):", "");
-    if (!path) return;
-    const trimmed = path.trim();
-    if (!trimmed) return;
+  const createFile = async (path: string) => {
     const res = await fetch(`/api/projects/${projectId}/files`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: trimmed, content: "" }),
+      body: JSON.stringify({ path, content: "" }),
     });
     if (!res.ok) {
       const body = (await res.json().catch(() => ({}))) as { message?: string };
       setTreeErr(body.message ?? `HTTP ${res.status}`);
       return;
     }
-    await mutateDirs([dirOf(trimmed)]);
-    setSelectedPath(trimmed);
+    await mutateDirs([dirOf(path)]);
+    setSelectedPath(path);
     setSavedMtime(undefined);
+    setPendingNew(null);
   };
 
-  const newFolder = async () => {
-    const path = window.prompt("New folder (project-relative):", "");
-    if (!path) return;
-    const trimmed = path.trim();
-    if (!trimmed) return;
+  const createFolder = async (path: string) => {
     const res = await fetch(`/api/projects/${projectId}/files`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: trimmed, kind: "dir" }),
+      body: JSON.stringify({ path, kind: "dir" }),
     });
     if (!res.ok) {
       const body = (await res.json().catch(() => ({}))) as { message?: string };
       setTreeErr(body.message ?? `HTTP ${res.status}`);
       return;
     }
-    await mutateDirs([dirOf(trimmed)]);
+    await mutateDirs([dirOf(path)]);
+    setPendingNew(null);
   };
   // Tracks the editor's persisted-on-disk content so we can detect unsaved
   // edits and prompt before discarding them when the user clicks a new file.
@@ -641,7 +729,7 @@ export function FilesTab({ projectId }: FilesTabProps) {
         <span className="flex items-center gap-0.5">
           <button
             type="button"
-            onClick={newFile}
+            onClick={() => setPendingNew("file")}
             aria-label="New file"
             title="New file"
             className="rounded p-1.5 text-zinc-500 hover:text-zinc-200 md:p-1"
@@ -650,7 +738,7 @@ export function FilesTab({ projectId }: FilesTabProps) {
           </button>
           <button
             type="button"
-            onClick={newFolder}
+            onClick={() => setPendingNew("folder")}
             aria-label="New folder"
             title="New folder"
             className="rounded p-1.5 text-zinc-500 hover:text-zinc-200 md:p-1"
@@ -835,6 +923,27 @@ export function FilesTab({ projectId }: FilesTabProps) {
             await doSave(true);
           }}
           onClose={() => setShowStaleDialog(false)}
+        />
+      )}
+
+      {pendingNew === "file" && (
+        <NameInputDialog
+          title="New file"
+          label="Path (project-relative)"
+          placeholder="src/example.ts"
+          submitLabel="Create file"
+          onSubmit={createFile}
+          onClose={() => setPendingNew(null)}
+        />
+      )}
+      {pendingNew === "folder" && (
+        <NameInputDialog
+          title="New folder"
+          label="Path (project-relative)"
+          placeholder="src/components"
+          submitLabel="Create folder"
+          onSubmit={createFolder}
+          onClose={() => setPendingNew(null)}
         />
       )}
     </div>

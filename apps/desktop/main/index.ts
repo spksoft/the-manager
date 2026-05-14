@@ -1,16 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import {
-  app,
-  BrowserWindow,
-  dialog,
-  ipcMain,
-  Menu,
-  nativeImage,
-  session,
-  systemPreferences,
-} from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, session } from "electron";
 import { devUrl } from "./config";
 import { buildApplicationMenu } from "./menu";
 import { getCurrentServerPort, restartEmbeddedServer, startEmbeddedServer } from "./server";
@@ -218,20 +209,6 @@ app.whenReady().then(async () => {
     }
     return false;
   });
-
-  // macOS gates microphone access behind its own TCC prompt — `getUserMedia`
-  // silently fails until the user has approved it. Trigger the prompt up
-  // front so the first mic click in the renderer doesn't no-op.
-  if (process.platform === "darwin") {
-    try {
-      const status = systemPreferences.getMediaAccessStatus("microphone");
-      if (status === "not-determined") {
-        await systemPreferences.askForMediaAccess("microphone");
-      }
-    } catch {
-      // Best effort — the renderer will surface a clearer error if it fails.
-    }
-  }
 
   // Privileged ops that genuinely need Electron (cannot be done over HTTP).
   ipcMain.handle("the-manager:pick-directory", async (event) => {
