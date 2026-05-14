@@ -30,12 +30,6 @@ extraResources:
 mac:
   category: public.app-category.developer-tools
   icon: assets/icon.png
-  # Declare the whole bundle as a UI element (menubar utility). This hides
-  # both the main process AND any Electron-as-Node child processes from the
-  # Dock — `app.dock.hide()` only covers the parent, so without LSUIElement
-  # the spawned embedded-server process shows up as a separate "exec" entry.
-  extendInfo:
-    LSUIElement: true
   target:
     - target: dmg
       arch:

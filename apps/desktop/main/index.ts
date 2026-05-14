@@ -1,8 +1,9 @@
 import { spawnSync } from "node:child_process";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { app, BrowserWindow, dialog, ipcMain, nativeImage } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage } from "electron";
 import { devUrl } from "./config";
+import { buildApplicationMenu } from "./menu";
 import { getCurrentServerPort, restartEmbeddedServer, startEmbeddedServer } from "./server";
 import { rebuildTrayMenu, setupTray } from "./tray";
 
@@ -161,17 +162,14 @@ app.on("before-quit", () => {
 });
 
 app.whenReady().then(async () => {
-  if (process.platform === "darwin") {
-    if (app.isPackaged) {
-      // Menubar-only experience: hide the Dock icon so the app feels like a
-      // tray utility instead of a regular windowed app. Windows can still be
-      // shown via the tray menu; close-to-tray remains the default.
-      app.dock?.hide();
-    } else if (!appIcon.isEmpty()) {
-      // In dev (`electron .` against unpackaged source) keep the Dock icon
-      // so the developer can Cmd-Tab to the running instance.
-      app.dock?.setIcon(appIcon);
-    }
+  // Keep the Dock icon visible on macOS so Cmd-Tab works and the standard
+  // application menu (with Preferences/Quit) shows in the menu bar. The tray
+  // is still set up below; close-to-tray behavior is preserved.
+  if (process.platform === "darwin" && !app.isPackaged && !appIcon.isEmpty()) {
+    // In packaged builds macOS reads the bundle icon. In dev (`electron .`
+    // against unpackaged source) point the Dock at our PNG so it doesn't
+    // fall back to the generic Electron icon.
+    app.dock?.setIcon(appIcon);
   }
 
   // Privileged ops that genuinely need Electron (cannot be done over HTTP).
@@ -222,6 +220,21 @@ app.whenReady().then(async () => {
   });
 
   await createWindow();
+
+  Menu.setApplicationMenu(
+    buildApplicationMenu({
+      onOpenPreferences: () => {
+        void (async () => {
+          await showMainWindow();
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send("the-manager:open-preferences");
+          }
+        })();
+      },
+      onShowWindow: () => void showMainWindow(),
+      getUrl: () => currentUrl ?? "",
+    }),
+  );
 
   setupTray({
     getUrl: () => currentUrl ?? "",
