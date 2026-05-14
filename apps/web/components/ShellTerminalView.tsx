@@ -177,12 +177,22 @@ export function ShellTerminalView({ scope, sessionId }: ShellTerminalViewProps) 
   return (
     <div className="flex h-full min-h-0 flex-col gap-2">
       {error && <ErrorBanner message={error} onDismiss={() => setError(null)} />}
-      <div
-        ref={containerRef}
-        role="application"
-        aria-label="Interactive shell terminal"
-        className="min-h-0 flex-1 overflow-hidden rounded-md border border-zinc-800 bg-[#0a0a0a] p-1 md:p-2"
-      />
+      {/*
+       * The inner div is the FitAddon's parent — keep it tight (no padding, no
+       * border). FitAddon reads getComputedStyle(parent).height, which with
+       * box-sizing: border-box returns the border-box value and only subtracts
+       * the xterm child's own padding. Padding or a border directly on the
+       * fit-parent makes it over-estimate by one row, which then renders
+       * outside the content box and gets clipped by overflow-hidden.
+       */}
+      <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-zinc-800 bg-[#0a0a0a] p-1 md:p-2">
+        <div
+          ref={containerRef}
+          role="application"
+          aria-label="Interactive shell terminal"
+          className="h-full w-full"
+        />
+      </div>
       <MobileTerminalKeyBar onKey={postInput} />
     </div>
   );

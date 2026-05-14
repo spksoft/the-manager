@@ -230,12 +230,20 @@ export function TerminalView({ projectId }: TerminalViewProps) {
   return (
     <section className="animate-fade-in flex h-full min-h-0 flex-col gap-2">
       {error && <ErrorBanner message={error} onDismiss={() => setError(null)} />}
-      <div
-        ref={containerRef}
-        role="application"
-        aria-label="Interactive Claude terminal"
-        className="min-h-0 flex-1 overflow-hidden rounded-lg border border-zinc-800 bg-[#0a0a0a] p-1 transition-colors md:p-2"
-      />
+      {/*
+       * The inner div is the FitAddon's parent — keep it tight (no padding, no
+       * border). FitAddon's height math doesn't account for the parent's own
+       * padding/border with box-sizing: border-box, so styling those on the
+       * fit-parent makes it over-shoot by a row and clip the bottom line.
+       */}
+      <div className="min-h-0 flex-1 overflow-hidden rounded-lg border border-zinc-800 bg-[#0a0a0a] p-1 transition-colors md:p-2">
+        <div
+          ref={containerRef}
+          role="application"
+          aria-label="Interactive Claude terminal"
+          className="h-full w-full"
+        />
+      </div>
       <MobileTerminalKeyBar onKey={postInput} />
       <div className="flex flex-shrink-0 items-center justify-end gap-2">
         <MicButton onResult={handleVoiceInput} />
