@@ -21,8 +21,12 @@ const defaultData: UiStateData = {
 };
 
 /**
- * Pre-parse migration: older UI state files lack newer additive fields. Fill
- * them in so the strict schema parses without forcing a version bump.
+ * Pre-parse migration: older UI state files lack newer additive fields, or
+ * carry enum values from tabs/views that have since been removed (e.g. an
+ * older build's "tasks" Manager tab). Coerce them to current defaults so the
+ * strict schema parses without forcing a version bump — otherwise the whole
+ * UI gets wedged: GET /api/ui-state 400s, useUiState().data stays undefined,
+ * and every tab/drawer click PUTs against the same broken file and 400s too.
  * Kept here (not in schemas.ts) because schemas.ts deliberately avoids
  * `.default()` — see the CLAUDE.md note on input/output type divergence.
  */
@@ -35,6 +39,9 @@ function migrate(raw: unknown): unknown {
   }
   if (file.data.terminalDrawer === undefined) {
     file.data.terminalDrawer = { expanded: false, heightPx: 280 };
+  }
+  if (file.data.activeTabManager !== "agent" && file.data.activeTabManager !== "files") {
+    file.data.activeTabManager = "agent";
   }
   return raw;
 }
