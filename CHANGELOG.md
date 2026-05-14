@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-05-14
+- Document macOS Gatekeeper workaround for unsigned DMG on first launch
 - Revamp README with branding and split developer docs into docs/DEVELOPMENT.md
 - Bump version to 0.1.3
 - Bump version to 0.1.2

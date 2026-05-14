@@ -46,6 +46,21 @@ pnpm install
 pnpm dev:web        # http://localhost:3000  (or `pnpm dev` to also launch Electron)
 ```
 
+### First launch on macOS
+
+The DMG is **not** signed with an Apple Developer ID, so the first time you open the app macOS will warn:
+
+> **"The Manager" can't be opened because Apple cannot check it for malicious software.**
+> *or*
+> **Apple could not verify "The Manager" is free of malware that may harm your Mac or compromise your privacy.**
+
+This is expected for unsigned open-source apps. To allow it (you only have to do this once):
+
+1. Try to open the app and dismiss the warning.
+2. Open **System Settings → Privacy & Security**.
+3. Scroll to the security section — you'll see *"The Manager" was blocked…* with an **Open Anyway** button. Click it.
+4. Confirm in the follow-up dialog.
+
 ## Quick start
 
 1. Make sure the `claude` CLI is installed and on your `PATH` (`claude --version`).
