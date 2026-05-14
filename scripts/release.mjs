@@ -26,5 +26,5 @@ for (const f of files) {
 
 execSync(`git add ${files.join(" ")}`, { stdio: "inherit" });
 execSync(`git commit -m "release: v${next}"`, { stdio: "inherit" });
-execSync(`git tag v${next}`, { stdio: "inherit" });
+execSync(`git tag -a v${next} -m "v${next}"`, { stdio: "inherit" });
 console.log(`\nTagged v${next}. Push with:  git push origin main --follow-tags`);
