@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-05-14
+- Bump version to 0.1.2
 - Create annotated release tags
 - Bump version to 0.1.1
 - Retry git add on index.lock contention in changelog pre-commit hook
