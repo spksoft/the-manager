@@ -1,76 +1,94 @@
-# The Manager 
+<div align="center">
+  <img src="docs/assets/logo.png" alt="The Manager" width="128" height="128" />
 
-A meta-agent app for orchestrating CLI coding agents (Claude Code first; Codex / Gemini CLIs later) across multiple projects. Ships as a Next.js web app, an Electron desktop app, and a self-hosted Node server — all from one codebase.
+  <h1>The Manager</h1>
 
-See [`CLAUDE.md`](./CLAUDE.md) for architecture, principles, and design rationale.
+  <p><strong>One control plane for every coding agent on your machine.</strong></p>
 
-## What it does
+  <p>
+    <a href="https://github.com/spksoft/the-manager/actions/workflows/ci.yml"><img src="https://github.com/spksoft/the-manager/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+    <a href="https://github.com/spksoft/the-manager/releases"><img src="https://img.shields.io/github/v/release/spksoft/the-manager?include_prereleases&sort=semver" alt="Latest release" /></a>
+    <a href="LICENSE"><img src="https://img.shields.io/github/license/spksoft/the-manager" alt="License: MIT" /></a>
+    <img src="https://img.shields.io/badge/node-%3E=22-brightgreen" alt="Node >= 22" />
+    <img src="https://img.shields.io/badge/built%20with-Next.js%20%C2%B7%20Electron-black" alt="Next.js + Electron" />
+  </p>
+</div>
 
-- Register projects (any directory on disk) and spawn a CLI agent inside each.
-- Watch each agent's pty output in a real terminal (xterm.js), send input, kill it.
-- A privileged **Manager** agent — a long-lived `claude` session in its own cwd — that you can use as a control plane across projects.
-- A mini git display per project (status / branch / recent log).
-- A lightweight file browser and editor (CodeMirror 6) for in-app edits.
-- A shared **Assets** browser (global storage + per-project scope).
-- Settings persisted to a single JSON tree under `~/.the-manager/`.
+---
 
-## Requirements
+**The Manager** is a meta-agent app that puts every project on your laptop — and every CLI coding agent running inside them — behind a single window. Register a project, attach a long-lived `claude` (or `codex`, `gemini`) session to it, watch its terminal in real time, and let a privileged **Manager** agent fan work out across all of them.
 
-- Node `>= 22`
-- `pnpm 10`
-- The `claude` CLI on your `PATH` (and `codex` / `gemini` if you want to use those drivers). The Manager itself runs through `claude` — there is **no** Anthropic API key required.
+It runs as a Next.js web app, an Electron desktop app, and a self-hosted server — from one codebase.
+
+## Highlights
+
+- **Per-project agent sessions.** Long-lived pty under `claude` (no `-p`), full interactive REPL streamed to the browser via xterm.js.
+- **A Manager agent.** A separate, privileged `claude` session in its own working directory, ready to dispatch tasks across your projects.
+- **Mini git pane.** Branch, status, recent log, per project — no leaving the window to `cd`.
+- **Lightweight file editor.** CodeMirror 6 for in-app edits without booting a heavyweight IDE.
+- **Shared assets.** A global storage area + per-project scopes for passing context between agents.
+- **No API keys required.** The Manager talks to Claude through your installed `claude` CLI; bring your own login.
+
+## Install
+
+### Download (recommended)
+
+Grab the latest signed-free DMG from [Releases](https://github.com/spksoft/the-manager/releases) and drag **The Manager.app** to Applications.
+
+> Apple Silicon and Intel macOS only for now. Windows / Linux desktop builds are not yet shipped — use the web build below.
+
+### Run from source
+
+```bash
+git clone https://github.com/spksoft/the-manager.git
+cd the-manager
+pnpm install
+pnpm dev:web        # http://localhost:3000  (or `pnpm dev` to also launch Electron)
+```
 
 ## Quick start
 
-```bash
-pnpm install
-pnpm dev            # runs web + desktop in parallel
-pnpm dev:web        # web only (http://localhost:3000)
-pnpm dev:desktop    # desktop only (Electron window pointing at the web dev server)
-```
-
-Open `http://localhost:3000`, click **+** in the sidebar to register a project, then click **Manager** (or your project) and start chatting.
+1. Make sure the `claude` CLI is installed and on your `PATH` (`claude --version`).
+2. Launch The Manager.
+3. Click **+** in the sidebar to register a project (any directory on disk).
+4. Open the project — a `claude` session boots inside its working directory.
+5. Switch to **Manager** at any time to issue cross-project commands.
 
 ## Configuration
 
-The Manager reads optional environment variables:
+Optional environment variables (copy `.env.example` → `.env.local`):
 
-| Var | Purpose |
-|---|---|
-| `THE_MANAGER_HOME` | Override the on-disk storage root (default: `~/.the-manager/`). |
-| `THE_MANAGER_CLAUDE_BIN` | Override the path to the `claude` CLI (default: looked up on `PATH`). |
-| `THE_MANAGER_CODEX_BIN` | Same, for Codex. |
-| `THE_MANAGER_GEMINI_BIN` | Same, for Gemini. |
-| `THE_MANAGER_DEV_URL` | URL the Electron window loads in dev (default: `http://localhost:3000`). |
+| Variable | Purpose | Default |
+|---|---|---|
+| `THE_MANAGER_HOME` | On-disk storage root | `~/.the-manager/` |
+| `THE_MANAGER_CLAUDE_BIN` | Path to the `claude` CLI | found on `PATH` |
+| `THE_MANAGER_CODEX_BIN` | Path to the `codex` CLI | found on `PATH` |
+| `THE_MANAGER_GEMINI_BIN` | Path to the `gemini` CLI | found on `PATH` |
+| `THE_MANAGER_DEV_URL` | URL the Electron window loads in dev | `http://localhost:3000` |
 
-## Workspace
+## Requirements
 
-| Path | Purpose |
-|---|---|
-| `apps/web` | Next.js App Router — UI + Route Handlers (the "server") |
-| `apps/desktop` | Electron shell that loads `apps/web` |
-| `packages/core` | Domain layer (pure) |
-| `packages/drivers` | CLI driver abstraction + pty-backed `ClaudeDriver` / `CodexDriver` / `GeminiDriver` |
-| `packages/persistence` | JSON-file storage (`JsonStore`, repos) |
-| `packages/git` | `simple-git` wrapper for the mini git display |
-| `packages/ui` | Shared component primitives |
-| `packages/editor` | CodeMirror 6 wrapper |
-| `packages/shared` | Types, errors, constants |
+- **Node** `>= 22`
+- **pnpm** `10`
+- A working **`claude`** CLI on `PATH` (Anthropic account; no API key needed). Optional: `codex`, `gemini`.
 
-## Verifying the install
+## Documentation
 
-```bash
-pnpm typecheck
-pnpm lint
-pnpm build
+- **Users** — you're reading it. See [Configuration](#configuration) and [Quick start](#quick-start) above.
+- **Developers / contributors** — [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) covers workspace layout, commands, conventions, smoke tests, and the release flow.
+- **Architecture & design rationale** — [`CLAUDE.md`](CLAUDE.md) is the source of truth on layering, the CLI driver abstraction, and the "one app for all apps" model.
+- **Changelog** — [`CHANGELOG.md`](CHANGELOG.md).
 
-# Persistence smoke test — confirms atomic writes survive a restart.
-pnpm smoke:persistence
+## Contributing
 
-# API smoke — boots `next start` on a free port and exercises every route.
-pnpm smoke
-```
+Issues and pull requests are welcome. Before opening a PR, please:
+
+1. Read [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) for the workspace conventions.
+2. Run `pnpm typecheck && pnpm lint && pnpm build` locally.
+3. Run the smoke tests (`pnpm smoke:persistence` and `pnpm smoke`).
+
+A pre-commit hook appends a one-line entry to `CHANGELOG.md` from your staged diff — no manual changelog edits required.
 
 ## License
 
-[MIT](./LICENSE).
+[MIT](LICENSE) © Sippakorn Raksakiart
