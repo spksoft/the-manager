@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-05-14
+- Update Next.js generated types reference to use default .next directory
 - Restore Dock icon and add application menu with Settings shortcut on macOS
 - Document macOS Gatekeeper workaround for unsigned DMG on first launch
 - Revamp README with branding and split developer docs into docs/DEVELOPMENT.md
