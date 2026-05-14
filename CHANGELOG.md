@@ -1,6 +1,8 @@
 # Changelog
 
 ## 2026-05-14
+- Retry git add on index.lock contention in changelog pre-commit hook
+- Remove conversation replay assertion from API smoke test
 - Add release workflow and version bump script to publish DMG builds on tag push
 
 ## 2026-05-13

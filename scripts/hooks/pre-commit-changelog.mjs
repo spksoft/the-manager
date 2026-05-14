@@ -83,11 +83,28 @@ if (body.includes(`\n${header}\n`)) {
 }
 
 writeFileSync(CHANGELOG, body);
-execFileSync("git", ["add", "CHANGELOG.md"], { cwd: REPO_ROOT });
+// `claude -p` above takes seconds; during that window another git operation
+// (editor, file watcher, parallel terminal) can grab .git/index.lock. Retry
+// briefly instead of aborting the commit.
+await addWithRetry("CHANGELOG.md");
 console.log(`       -> CHANGELOG.md: ${entry}`);
 
 function stripFences(text) {
   const t = text.trim();
   const m = /^```[a-zA-Z0-9_-]*\n([\s\S]*?)\n```$/.exec(t);
   return m?.[1] ?? t;
+}
+
+async function addWithRetry(path, attempts = 5) {
+  for (let i = 0; i < attempts; i++) {
+    try {
+      execFileSync("git", ["add", path], { cwd: REPO_ROOT, stdio: "pipe" });
+      return;
+    } catch (err) {
+      const msg = err.stderr?.toString() ?? "";
+      const lockHeld = msg.includes("index.lock");
+      if (!lockHeld || i === attempts - 1) throw err;
+      await new Promise((r) => setTimeout(r, 200 * 2 ** i));
+    }
+  }
 }

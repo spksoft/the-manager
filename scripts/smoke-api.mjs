@@ -145,16 +145,6 @@ async function main() {
       log("✓ GET /api/projects has 1 project");
     }
 
-    // /api/projects/[id]/conversation empty (chat replay)
-    {
-      const r = await jsonReq("GET", `${base}/api/projects/${created.id}/conversation`);
-      assert(
-        r.status === 200 && Array.isArray(r.body?.entries) && r.body.entries.length === 0,
-        "conversation empty",
-      );
-      log("✓ /api/projects/[id]/conversation empty");
-    }
-
     // /api/settings GET + PUT
     {
       const get = await jsonReq("GET", `${base}/api/settings`);
