@@ -67,3 +67,56 @@ function ensureTtlSweeper(): void {
 }
 
 ensureTtlSweeper();
+
+// ---------------------------------------------------------------------------
+// Graceful shutdown — kill live pty sessions on SIGINT / SIGTERM.
+// ---------------------------------------------------------------------------
+// Default Node behaviour on these signals is immediate exit; the kernel then
+// usually delivers SIGHUP to descendant ptys via the controlling session,
+// which is enough in practice. We register explicit handlers so we can:
+//   1. SIGTERM every live claude / shell pty first (so they emit "exited"
+//      notifications and clean up their own state),
+//   2. wait a brief grace period,
+//   3. SIGKILL anything that ignored SIGTERM (a wedged claude REPL is the
+//      typical culprit),
+//   4. then exit ourselves with the conventional 128 + signum code.
+//
+// Guarded by a globalThis flag so Next's per-request module re-evaluation
+// can't pile up duplicate listeners. We use `process.once` (not `process.on`)
+// so a second Ctrl+C falls back to default behaviour and the user always has
+// an escape hatch if our cleanup hangs.
+
+const SHUTDOWN_FLAG = "__the_manager_shutdown__";
+type ShutdownGlobal = typeof globalThis & { [SHUTDOWN_FLAG]?: true };
+const SHUTDOWN_GRACE_MS = 300;
+
+function ensureShutdownHandlers(): void {
+  const g = globalThis as ShutdownGlobal;
+  if (g[SHUTDOWN_FLAG]) return;
+  g[SHUTDOWN_FLAG] = true;
+
+  const onSignal = async (signal: "SIGINT" | "SIGTERM"): Promise<void> => {
+    try {
+      // Dynamic imports for the same reason the TTL sweeper uses them:
+      // runtime.ts is loaded extremely early and we don't want to drag in
+      // sessions.ts's side effects at module-load time.
+      const [{ killAllSessions }, { killAllTerminals }] = await Promise.all([
+        import("./sessions"),
+        import("./terminals"),
+      ]);
+      killAllSessions();
+      killAllTerminals();
+      await new Promise((resolve) => setTimeout(resolve, SHUTDOWN_GRACE_MS));
+      killAllSessions(true);
+      killAllTerminals(true);
+    } catch (err) {
+      console.error("[the-manager] shutdown cleanup failed:", err);
+    }
+    process.exit(signal === "SIGINT" ? 130 : 143);
+  };
+
+  process.once("SIGINT", () => void onSignal("SIGINT"));
+  process.once("SIGTERM", () => void onSignal("SIGTERM"));
+}
+
+ensureShutdownHandlers();

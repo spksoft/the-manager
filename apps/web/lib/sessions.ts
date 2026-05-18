@@ -74,6 +74,14 @@ export interface SessionStatus {
  */
 const IDLE_QUIET_MS = 2_000;
 
+/**
+ * After we SIGTERM a pty in `endSession`, this is how long we wait for it to
+ * exit on its own before escalating to SIGKILL. A claude REPL wedged on a
+ * tool-permission prompt or its own internal loop can ignore SIGTERM, and
+ * without escalation we'd remove the registry entry and orphan the process.
+ */
+const FORCE_KILL_GRACE_MS = 3_000;
+
 const REG_KEY = "__the_manager_sessions__";
 type RegistryGlobal = typeof globalThis & { [REG_KEY]?: Map<string, Session> };
 function registry(): Map<string, Session> {
@@ -573,6 +581,36 @@ export function endSession(projectId: ProjectId): void {
   if (!s) return;
   s.handle.kill("SIGTERM");
   reg.delete(projectId);
+  // SIGTERM can be ignored by a wedged agent. Escalate to SIGKILL after a
+  // grace period so the pty doesn't outlive its registry entry as an orphan.
+  // .unref so the timer alone won't keep the event loop alive.
+  setTimeout(() => {
+    try {
+      s.handle.kill("SIGKILL");
+    } catch {
+      /* pty already exited — node-pty surfaces ESRCH when the underlying pid is gone */
+    }
+  }, FORCE_KILL_GRACE_MS).unref?.();
+}
+
+/**
+ * Send SIGTERM to every live claude session. Invoked from runtime.ts on
+ * process SIGINT / SIGTERM so the parent gives children a graceful chance to
+ * exit before the Node process itself goes away.
+ *
+ * Pass `force: true` for a second pass after a short grace period — that
+ * sends SIGKILL to whatever's still alive.
+ */
+export function killAllSessions(force = false): void {
+  const signal: NodeJS.Signals = force ? "SIGKILL" : "SIGTERM";
+  for (const s of registry().values()) {
+    if (s.exited) continue;
+    try {
+      s.handle.kill(signal);
+    } catch {
+      /* already gone */
+    }
+  }
 }
 
 /**

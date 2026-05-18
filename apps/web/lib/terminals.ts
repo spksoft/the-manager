@@ -72,6 +72,13 @@ function getOrInitScope(scope: ScopeKey): ScopeEntry {
 
 const shellCommand = process.env.SHELL ?? "/bin/zsh";
 
+/**
+ * Same SIGTERM → SIGKILL escalation as `sessions.ts`. A user-driven shell
+ * (vim, less, a watch loop) can ignore SIGTERM just as easily as a wedged
+ * claude REPL, so the force-kill safety net is identical.
+ */
+const FORCE_KILL_GRACE_MS = 3_000;
+
 const driver = new PtyAgentDriver({
   id: "shell",
   command: shellCommand,
@@ -191,7 +198,35 @@ export function kill(scope: ScopeKey, id: SessionId): boolean {
   // The exit handler will delete from the map and mark exited; do it here too
   // so an immediate follow-up `listSessions` already reflects the kill.
   entry.sessions.delete(id);
+  // Escalate to SIGKILL if SIGTERM is ignored. The session reference survives
+  // the map deletion through this closure, which is exactly what we need.
+  setTimeout(() => {
+    try {
+      s.handle.kill("SIGKILL");
+    } catch {
+      /* already exited */
+    }
+  }, FORCE_KILL_GRACE_MS).unref?.();
   return true;
+}
+
+/**
+ * Send SIGTERM (or SIGKILL when `force: true`) to every live shell session in
+ * every scope. Used by runtime.ts on process shutdown so we don't leave a
+ * crowd of shell ptys running after the embedded Next server goes away.
+ */
+export function killAllTerminals(force = false): void {
+  const signal: NodeJS.Signals = force ? "SIGKILL" : "SIGTERM";
+  for (const entry of registry().values()) {
+    for (const s of entry.sessions.values()) {
+      if (s.exited) continue;
+      try {
+        s.handle.kill(signal);
+      } catch {
+        /* already gone */
+      }
+    }
+  }
 }
 
 export function attach(
