@@ -28,12 +28,25 @@ export interface ProjectProposalPayload {
   reason?: string;
 }
 
+/**
+ * Phase 3 will add `write_file` + `run_command` variants here. The
+ * `ProposalPayload`/`ProposalResult` types are intentionally kind-discriminated
+ * so the broker can pattern-match without losing type safety.
+ */
+export type ProposalKind = "create_project";
+
+export type ProposalPayload = ProjectProposalPayload;
+
+export type ProposalResult = ProjectProposalResult;
+
 export interface PendingProjectProposal {
   id: string;
   kind: "create_project";
   payload: ProjectProposalPayload;
   createdAt: string;
 }
+
+export type PendingProposal = PendingProjectProposal;
 
 interface InternalEntry extends PendingProjectProposal {
   resolve: (result: ProjectProposalResult) => void;

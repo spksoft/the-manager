@@ -8,7 +8,7 @@ import type { NotificationMuteEntry, NotificationSeverity } from "@the-manager/p
 
 export type { NotificationMuteEntry, NotificationSeverity };
 
-export type NotificationKind = "exited" | "ready" | "needs_input";
+export type NotificationKind = "exited" | "ready" | "needs_input" | "manager";
 
 export interface NotificationEvent {
   id: string;

@@ -131,6 +131,12 @@ export const SettingsSchema = z.object({
       /** Per-project mute table. Urgent events bypass mute by design. */
       mutedProjects: z.array(NotificationMuteEntrySchema),
     }),
+    /**
+     * Project ids the user has marked as "trusted" — Manager write/run tools
+     * apply directly instead of going through the Inbox approval queue. Empty
+     * by default; safe-mode is on for every project on first contact.
+     */
+    trustedProjects: z.array(z.string()),
   }),
 });
 export type SettingsFile = z.infer<typeof SettingsSchema>;

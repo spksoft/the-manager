@@ -5,6 +5,7 @@ import { paths } from "@the-manager/persistence";
 import { newId, type ProjectId, ValidationError } from "@the-manager/shared";
 import { z } from "zod";
 import { handleErr, jsonOk, parseJson } from "../../../lib/api";
+import { refreshManagerMemoryInBackground } from "../../../lib/manager-memory";
 import { scheduleProjectDescriptionGeneration } from "../../../lib/project-description";
 import { repos } from "../../../lib/runtime";
 
@@ -77,6 +78,7 @@ export async function POST(req: Request) {
     if (!project.description) {
       scheduleProjectDescriptionGeneration(project.id as ProjectId);
     }
+    refreshManagerMemoryInBackground();
     return jsonOk(project, { status: 201 });
   } catch (err) {
     return handleErr(err);

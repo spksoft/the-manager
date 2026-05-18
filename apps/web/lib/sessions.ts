@@ -1,10 +1,13 @@
 import "server-only";
+import { EventEmitter } from "node:events";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { extractPreview, type SessionActivity, type SessionActivityState } from "@the-manager/core";
 import type { AgentHandle } from "@the-manager/drivers";
 import { ClaudeDriver } from "@the-manager/drivers";
 import { paths } from "@the-manager/persistence";
-import type { ProjectId } from "@the-manager/shared";
+import type { DriverId, ProjectId } from "@the-manager/shared";
+import { ensure as ensureManagerMemory, ensureProjectNote, refreshIndices } from "./manager-memory";
 import { emitNotification } from "./notifications";
 import {
   appendChunk,
@@ -88,6 +91,52 @@ function registry(): Map<string, Session> {
   const g = globalThis as RegistryGlobal;
   if (!g[REG_KEY]) g[REG_KEY] = new Map();
   return g[REG_KEY];
+}
+
+const ACTIVITY_KEY = "__the_manager_activity__";
+type ActivityGlobal = typeof globalThis & { [ACTIVITY_KEY]?: EventEmitter };
+function activityEmitter(): EventEmitter {
+  const g = globalThis as ActivityGlobal;
+  if (!g[ACTIVITY_KEY]) {
+    const em = new EventEmitter();
+    em.setMaxListeners(64);
+    g[ACTIVITY_KEY] = em;
+  }
+  return g[ACTIVITY_KEY];
+}
+
+/**
+ * Per-session throttle for activity emits — many pty chunks arrive in a burst
+ * during a single agent turn. We coalesce to at most one event every 250ms
+ * per session so the SSE stream stays cheap.
+ */
+const ACTIVITY_THROTTLE_MS = 250;
+const activityPending = new Map<string, NodeJS.Timeout>();
+
+function emitActivity(projectId: ProjectId): void {
+  if (activityPending.has(projectId)) return;
+  const timer = setTimeout(() => {
+    activityPending.delete(projectId);
+    const snap = activitySnapshotFor(projectId);
+    if (snap) activityEmitter().emit("update", snap);
+  }, ACTIVITY_THROTTLE_MS);
+  activityPending.set(projectId, timer);
+}
+
+function activitySnapshotFor(projectId: ProjectId): SessionActivity | null {
+  const s = registry().get(projectId);
+  if (!s) return null;
+  const state: SessionActivityState = s.exited ? "idle" : s.state;
+  const preview = extractPreview(recordingTail(s, 1024));
+  // Resolve a display label lazily so we don't block on every emit.
+  return {
+    scope: projectId === MANAGER_PROJECT_ID ? "manager" : { projectId },
+    driver: "claude" as DriverId,
+    state,
+    lastActivityAt: s.lastActivityAt,
+    preview,
+    label: projectId === MANAGER_PROJECT_ID ? "Manager" : projectId,
+  };
 }
 
 const driver = new ClaudeDriver();
@@ -180,6 +229,17 @@ async function ensureManagerWorkspace(cwd: string): Promise<void> {
     }
   } catch {
     /* missing or unreadable — nothing to clean up */
+  }
+
+  // 5. Manager memory: seed projects/ and journal/ then refresh app-managed
+  // sections so the Manager can read a roll-up of every project on startup.
+  try {
+    await ensureManagerMemory(cwd);
+    const projects = await repos.projects.list();
+    await refreshIndices(cwd, { projects });
+    await Promise.all(projects.map((p) => ensureProjectNote(cwd, p)));
+  } catch (err) {
+    console.error("[manager-memory] seed failed:", err);
   }
 }
 
@@ -390,6 +450,20 @@ Anything that touches code, files, or knowledge inside a project → delegate.
 This cwd (\`~/.the-manager/manager/cwd\`) is your private scratch space — fine
 for notes and intermediate files tied to orchestration. Project work goes
 through the project agents.
+
+### Memory layout (read these before answering, write between sessions)
+
+- **\`projects/_index.md\`** — auto-maintained one-line summary of every
+  registered project. The list between the \`managed:projects\` markers is
+  rewritten by the app whenever projects change; anything outside the markers
+  is yours to keep. Glance at this first so you know the roster without
+  calling \`list_projects\` every turn.
+- **\`projects/<projectId>.md\`** — per-project scratch file the app seeds and
+  you own. Stash gotchas, conventions, last-task summaries, open questions —
+  anything you want a future-you to know about that project.
+- **\`journal/_index.md\`** — auto-maintained list of the last 30 days with
+  task counts. Pointer only; the daily \`journal/YYYY-MM-DD.md\` files contain
+  the actual entries (appended automatically when tasks finish).
 `;
 
 function scheduleIdleCheck(session: Session, projectId: ProjectId): void {
@@ -406,6 +480,7 @@ function scheduleIdleCheck(session: Session, projectId: ProjectId): void {
       severity: "info",
       message: "is ready for input",
     });
+    emitActivity(projectId);
   }, IDLE_QUIET_MS);
 }
 
@@ -489,6 +564,7 @@ async function createSession(projectId: ProjectId, cols: number, rows: number): 
         scheduleIdleCheck(session, projectId);
       }
     }
+    emitActivity(projectId);
   });
 
   handle.on("exit", () => {
@@ -509,6 +585,7 @@ async function createSession(projectId: ProjectId, cols: number, rows: number): 
     session.dataSubs.clear();
     session.exitSubs.clear();
     if (registry().get(projectId) === session) registry().delete(projectId);
+    activityEmitter().emit("gone", projectId);
   });
 
   return session;
@@ -554,6 +631,7 @@ export function writeInput(projectId: ProjectId, data: string): boolean {
   if (s.state === "needs_input") {
     s.state = "working";
     scheduleIdleCheck(s, projectId);
+    emitActivity(projectId);
     return true;
   }
   // Only Enter actually submits work to claude. Plain keystrokes (typing,
@@ -562,6 +640,7 @@ export function writeInput(projectId: ProjectId, data: string): boolean {
   if (data.includes("\r") || data.includes("\n")) {
     s.state = "working";
     scheduleIdleCheck(s, projectId);
+    emitActivity(projectId);
   }
   return true;
 }
@@ -654,4 +733,35 @@ export function attach(
   onExit: ExitSubscriber,
 ): { initial: string[]; unsubscribe: () => void } {
   return attachRecording(session, onData, onExit);
+}
+
+/**
+ * One activity snapshot per live session in the registry. Used by SSE handlers
+ * to send the initial state on connect.
+ */
+export function activitySnapshot(): SessionActivity[] {
+  const out: SessionActivity[] = [];
+  for (const [projectId] of registry()) {
+    const snap = activitySnapshotFor(projectId as ProjectId);
+    if (snap) out.push(snap);
+  }
+  return out;
+}
+
+/**
+ * Subscribe to per-session activity events. Returns an unsubscribe fn.
+ *  - `onUpdate(snapshot)` — a session changed state or produced output.
+ *  - `onGone(projectId)` — a session exited and dropped out of the registry.
+ */
+export function subscribeActivity(handlers: {
+  onUpdate: (s: SessionActivity) => void;
+  onGone: (projectId: string) => void;
+}): () => void {
+  const em = activityEmitter();
+  em.on("update", handlers.onUpdate);
+  em.on("gone", handlers.onGone);
+  return () => {
+    em.off("update", handlers.onUpdate);
+    em.off("gone", handlers.onGone);
+  };
 }

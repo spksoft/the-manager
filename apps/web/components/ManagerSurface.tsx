@@ -1,9 +1,10 @@
 "use client";
 
 import { cn } from "@the-manager/ui";
-import { setManagerTab, useUiState } from "../lib/hooks";
+import { setManagerTab, useProjects, useUiState } from "../lib/hooks";
 import { MANAGER_PROJECT_ID } from "../lib/manager-id";
 import { FilesTab } from "./FilesTab";
+import { ManagerOnboarding } from "./ManagerOnboarding";
 import { TerminalView } from "./TerminalView";
 
 /**
@@ -22,6 +23,7 @@ const TABS: { id: Tab; label: string }[] = [
 
 export function ManagerSurface() {
   const { data, patchUiState } = useUiState();
+  const { data: projects = [] } = useProjects();
   const activeTab: Tab = data?.activeTabManager ?? "agent";
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -49,8 +51,15 @@ export function ManagerSurface() {
         ))}
       </div>
 
-      <div className="min-h-0 flex-1 overflow-hidden p-2 md:p-4">
-        {activeTab === "agent" && <TerminalView projectId={MANAGER_PROJECT_ID} />}
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-2 md:p-4">
+        {activeTab === "agent" && (
+          <>
+            <ManagerOnboarding projects={projects} />
+            <div className="min-h-0 flex-1 overflow-hidden">
+              <TerminalView projectId={MANAGER_PROJECT_ID} />
+            </div>
+          </>
+        )}
         {activeTab === "files" && <FilesTab projectId={MANAGER_PROJECT_ID} />}
       </div>
     </div>

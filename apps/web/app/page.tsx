@@ -8,6 +8,7 @@ import { AssetBrowser } from "../components/AssetBrowser";
 import { BottomTerminalDrawer } from "../components/BottomTerminalDrawer";
 import { CommandPalette } from "../components/CommandPalette";
 import { EditProjectDialog } from "../components/EditProjectDialog";
+import { InboxButton } from "../components/InboxButton";
 import { ManagerRequestBroker } from "../components/ManagerRequestBroker";
 import { ManagerSurface } from "../components/ManagerSurface";
 import { NewProjectDialog } from "../components/NewProjectDialog";
@@ -15,6 +16,7 @@ import { NotificationsBell } from "../components/NotificationsBell";
 import { ProjectWorkspace } from "../components/ProjectWorkspace";
 import { SettingsPanel } from "../components/SettingsPanel";
 import { type ActiveView, Sidebar } from "../components/Sidebar";
+import { StatusStrip } from "../components/StatusStrip";
 import { useProjects, useUiState } from "../lib/hooks";
 import { transport } from "../lib/transport";
 
@@ -135,6 +137,8 @@ export default function HomePage() {
               </div>
             </div>
             <div className="flex flex-shrink-0 items-center gap-3 text-xs text-zinc-500">
+              <StatusStrip projects={projects} onJump={(target) => setActiveView(target)} />
+              <InboxButton />
               <span className="hidden sm:inline">
                 {projects.length} project{projects.length !== 1 ? "s" : ""}
               </span>
@@ -177,7 +181,11 @@ export default function HomePage() {
           setActiveView({ type: "project", id: project.id });
         }}
       />
-      <CommandPalette open={commandPaletteOpen} onClose={() => setCommandPaletteOpen(false)} />
+      <CommandPalette
+        open={commandPaletteOpen}
+        onClose={() => setCommandPaletteOpen(false)}
+        onNavigate={(view) => setActiveView(view)}
+      />
     </div>
   );
 }

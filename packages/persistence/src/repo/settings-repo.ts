@@ -14,6 +14,7 @@ export const defaultSettings = (): SettingsFile => ({
       threshold: "info",
       mutedProjects: [],
     },
+    trustedProjects: [],
   },
 });
 
@@ -37,6 +38,10 @@ export const migrateSettings = (raw: unknown): unknown => {
       ...next,
       notifications: { osToasts: true, threshold: "info", mutedProjects: [] },
     };
+    mutated = true;
+  }
+  if (!("trustedProjects" in next)) {
+    next = { ...next, trustedProjects: [] };
     mutated = true;
   }
   return mutated ? { ...raw, data: next } : raw;

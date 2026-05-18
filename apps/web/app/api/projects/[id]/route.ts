@@ -4,6 +4,7 @@ import { isAbsolute } from "node:path";
 import { type ProjectId, ValidationError } from "@the-manager/shared";
 import { z } from "zod";
 import { handleErr, jsonOk, parseJson } from "../../../../lib/api";
+import { refreshManagerMemoryInBackground } from "../../../../lib/manager-memory";
 import { repos } from "../../../../lib/runtime";
 import { endSession } from "../../../../lib/sessions";
 
@@ -54,6 +55,7 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     if (patch.path !== undefined && before.path !== updated.path) {
       endSession(id as ProjectId);
     }
+    refreshManagerMemoryInBackground();
     return jsonOk(updated);
   } catch (err) {
     return handleErr(err);
@@ -66,6 +68,7 @@ export async function DELETE(_req: Request, ctx: { params: Promise<{ id: string 
     await repos.projects.remove(id as ProjectId);
     await repos.uiState.forgetProject(id);
     await repos.fileDrafts.forgetProject(id);
+    refreshManagerMemoryInBackground();
     return new Response(null, { status: 204 });
   } catch (err) {
     return handleErr(err);

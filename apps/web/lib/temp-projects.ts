@@ -2,6 +2,7 @@ import "server-only";
 import { rm } from "node:fs/promises";
 import { type ProjectRow, paths } from "@the-manager/persistence";
 import type { ProjectId } from "@the-manager/shared";
+import { refreshManagerMemoryInBackground } from "./manager-memory";
 import { repos } from "./runtime";
 import { endSession } from "./sessions";
 
@@ -49,6 +50,7 @@ export async function destroyEphemeralProject(project: ProjectRow): Promise<Dest
       result.diskError = err instanceof Error ? err.message : String(err);
     }
   }
+  refreshManagerMemoryInBackground();
   return result;
 }
 

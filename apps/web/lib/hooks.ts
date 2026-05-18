@@ -1,5 +1,7 @@
 "use client";
 
+import type { AggregateActivity, SessionActivity } from "@the-manager/core";
+import { aggregate } from "@the-manager/core";
 import type {
   BranchList,
   CommitDetails,
@@ -16,6 +18,7 @@ import type {
   ProjectRow,
   ProjectTab,
   SettingsFile,
+  TaskRow,
   TerminalDrawerState,
   UiStateData,
 } from "@the-manager/persistence";
@@ -787,4 +790,101 @@ function safeParse<T>(raw: string | undefined, fallback: T): T {
   } catch {
     return fallback;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Manager activity (StatusStrip + ActivityPanel)
+// ---------------------------------------------------------------------------
+function activityKey(s: SessionActivity): string {
+  return s.scope === "manager" ? "__manager__" : s.scope.projectId;
+}
+
+/**
+ * Live aggregate activity for every live session. Backed by SSE — on connect
+ * we get a `snapshot` event with the initial aggregate, then `update`/`gone`
+ * deltas keyed by session.
+ */
+export function useActivity(): { activity: AggregateActivity; hydrated: boolean } {
+  const [sessions, setSessions] = useState<Record<string, SessionActivity>>({});
+  const [hydrated, setHydrated] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const es = new EventSource("/api/manager/activity");
+
+    const onSnapshot = (e: MessageEvent) => {
+      const snap = safeParse<AggregateActivity>(e.data, {
+        worst: "idle",
+        busyCount: 0,
+        sessions: [],
+        generatedAt: new Date().toISOString(),
+      });
+      const next: Record<string, SessionActivity> = {};
+      for (const s of snap.sessions) next[activityKey(s)] = s;
+      setSessions(next);
+      setHydrated(true);
+    };
+    const onUpdate = (e: MessageEvent) => {
+      const s = safeParse<SessionActivity | null>(e.data, null);
+      if (!s) return;
+      setSessions((prev) => ({ ...prev, [activityKey(s)]: s }));
+    };
+    const onGone = (e: MessageEvent) => {
+      const data = safeParse<{ projectId: string }>(e.data, { projectId: "" });
+      if (!data.projectId) return;
+      setSessions((prev) => {
+        if (!(data.projectId in prev)) return prev;
+        const next = { ...prev };
+        delete next[data.projectId];
+        return next;
+      });
+    };
+
+    es.addEventListener("snapshot", onSnapshot);
+    es.addEventListener("update", onUpdate);
+    es.addEventListener("gone", onGone);
+
+    return () => {
+      es.close();
+    };
+  }, []);
+
+  const activity = aggregate(Object.values(sessions));
+  return { activity, hydrated };
+}
+
+// ---------------------------------------------------------------------------
+// Manager tasks
+// ---------------------------------------------------------------------------
+export function useTasks(): { tasks: TaskRow[]; hydrated: boolean } {
+  const [tasks, setTasks] = useState<Record<string, TaskRow>>({});
+  const [hydrated, setHydrated] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const es = new EventSource("/api/tasks/stream");
+
+    const onSnapshot = (e: MessageEvent) => {
+      const rows = safeParse<TaskRow[]>(e.data, []);
+      const next: Record<string, TaskRow> = {};
+      for (const r of rows) next[r.id] = r;
+      setTasks(next);
+      setHydrated(true);
+    };
+    const onUpdate = (e: MessageEvent) => {
+      const row = safeParse<TaskRow | null>(e.data, null);
+      if (!row) return;
+      setTasks((prev) => ({ ...prev, [row.id]: row }));
+    };
+
+    es.addEventListener("snapshot", onSnapshot);
+    es.addEventListener("update", onUpdate);
+
+    return () => es.close();
+  }, []);
+
+  const list = Object.values(tasks).sort(
+    (a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt),
+  );
+  return { tasks: list, hydrated };
 }
