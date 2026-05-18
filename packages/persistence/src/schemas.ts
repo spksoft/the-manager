@@ -20,11 +20,17 @@ export const ProjectSchema = z.object({
   ephemeral: z.boolean(),
   /** Optional auto-destroy deadline (ISO). `null` = never. */
   expiresAt: z.string().datetime().nullable(),
+  /**
+   * Short, one-or-two-sentence summary of what the project is. Surfaced to the
+   * Manager (via MCP) so it has enough context to route work without opening
+   * the project. `null` means generation hasn't completed yet (or failed).
+   */
+  description: z.string().nullable(),
 });
 export type ProjectRow = z.infer<typeof ProjectSchema>;
 
 export const ProjectsIndexSchema = z.object({
-  version: z.literal(2),
+  version: z.literal(3),
   data: z.array(ProjectSchema),
 });
 

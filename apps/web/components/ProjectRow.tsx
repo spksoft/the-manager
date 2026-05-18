@@ -21,6 +21,11 @@ export function ProjectRow({ project }: ProjectRowProps) {
           </span>
         </div>
         <p className="mt-0.5 truncate font-mono text-xs text-zinc-500">{project.path}</p>
+        <p
+          className={`mt-1 line-clamp-2 text-xs ${project.description ? "text-zinc-400" : "italic text-zinc-600"}`}
+        >
+          {project.description ?? "Description generating via claude -p…"}
+        </p>
       </div>
       <div className="hidden text-xs text-zinc-500 sm:block">
         {project.lastUsedAt ? shortDate(project.lastUsedAt) : "—"}

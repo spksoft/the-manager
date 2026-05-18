@@ -54,7 +54,7 @@ const TOOLS = [
   {
     name: "list_projects",
     description:
-      "List all projects The Manager knows about. Each entry has id, name, path, defaultDriver. Use the id with the other tools.",
+      "List all projects The Manager knows about. Each entry has id, name, path, defaultDriver, and an auto-generated `description` (one or two sentences summarising what the project is — may be null if generation hasn't finished or failed). Use the id with the other tools.",
     inputSchema: {
       type: "object",
       properties: {},
@@ -223,6 +223,7 @@ async function callTool(rawParams: unknown): Promise<ToolResult> {
         defaultDriver: p.defaultDriver,
         ephemeral: p.ephemeral,
         expiresAt: p.expiresAt,
+        description: p.description,
       }));
       return textResult(JSON.stringify(summary, null, 2));
     }

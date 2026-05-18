@@ -19,6 +19,7 @@ const a = {
   lastUsedAt: null,
   ephemeral: false,
   expiresAt: null,
+  description: null,
 };
 const b = {
   id: randomUUID(),
@@ -29,6 +30,7 @@ const b = {
   lastUsedAt: null,
   ephemeral: false,
   expiresAt: null,
+  description: "Second smoke project, used for restart verification.",
 };
 
 await repo1.add(a);

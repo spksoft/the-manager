@@ -309,6 +309,16 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
             ))}
           </ul>
         </section>
+
+        <section className="mt-7 flex flex-col gap-2">
+          <h3 className="text-sm font-medium text-zinc-200">About</h3>
+          <div className="flex items-center justify-between rounded-md border border-zinc-800 bg-zinc-900/40 px-3 py-2 text-sm text-zinc-300">
+            <span>The Manager</span>
+            <span className="font-mono text-xs text-zinc-400">
+              v{process.env.NEXT_PUBLIC_APP_VERSION ?? "dev"}
+            </span>
+          </div>
+        </section>
       </div>
     </Sheet>
   );

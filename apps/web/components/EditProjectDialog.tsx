@@ -31,6 +31,8 @@ export function EditProjectDialog({ open, project, onClose, onUpdated }: EditPro
   const [name, setName] = useState("");
   const [path, setPath] = useState("");
   const [driver, setDriver] = useState<DriverId>("claude");
+  const [description, setDescription] = useState("");
+  const [regenerating, setRegenerating] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [browserOpen, setBrowserOpen] = useState(false);
@@ -42,6 +44,7 @@ export function EditProjectDialog({ open, project, onClose, onUpdated }: EditPro
       setName(project.name);
       setPath(project.path);
       setDriver(project.defaultDriver);
+      setDescription(project.description ?? "");
       setError(null);
       firstFieldRef.current?.focus();
     }
@@ -55,6 +58,26 @@ export function EditProjectDialog({ open, project, onClose, onUpdated }: EditPro
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [open, onClose]);
+
+  const regenerate = async () => {
+    if (!project) return;
+    setError(null);
+    setRegenerating(true);
+    try {
+      const res = await fetch(`/api/projects/${project.id}/description`, { method: "POST" });
+      if (!res.ok) {
+        const body = (await res.json()) as { message?: string };
+        throw new Error(body.message ?? `HTTP ${res.status}`);
+      }
+      const payload = (await res.json()) as { project: ProjectRow; description: string };
+      setDescription(payload.description);
+      await Promise.all([mutate("/api/projects"), mutate(`/api/projects/${project.id}`)]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRegenerating(false);
+    }
+  };
 
   const browse = async () => {
     if (typeof window !== "undefined" && window.theManager) {
@@ -73,10 +96,16 @@ export function EditProjectDialog({ open, project, onClose, onUpdated }: EditPro
     try {
       const trimmedName = name.trim();
       const trimmedPath = path.trim();
+      const trimmedDescription = description.trim();
+      const currentDescription = project.description ?? "";
       const patch: Record<string, unknown> = {};
       if (trimmedName !== project.name) patch.name = trimmedName;
       if (trimmedPath !== project.path) patch.path = trimmedPath;
       if (driver !== project.defaultDriver) patch.defaultDriver = driver;
+      if (trimmedDescription !== currentDescription) {
+        // Empty string = clear back to null, anything else is a manual override.
+        patch.description = trimmedDescription.length > 0 ? trimmedDescription : null;
+      }
       if (Object.keys(patch).length === 0) {
         onClose();
         return;
@@ -206,11 +235,50 @@ export function EditProjectDialog({ open, project, onClose, onUpdated }: EditPro
             </div>
           </div>
 
+          <div className="flex flex-col gap-1.5">
+            <div className="flex items-center justify-between gap-2">
+              <label
+                htmlFor="edit-project-description"
+                className="text-sm font-medium text-zinc-300"
+              >
+                Description
+                <span className="ml-2 text-[11px] font-normal text-zinc-500">
+                  shown to the Manager
+                </span>
+              </label>
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={regenerate}
+                disabled={regenerating || submitting}
+              >
+                {regenerating ? "Generating…" : "Regenerate"}
+              </Button>
+            </div>
+            <textarea
+              id="edit-project-description"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              rows={3}
+              maxLength={400}
+              placeholder={
+                regenerating
+                  ? "Drafting via claude -p…"
+                  : "One or two sentences — leave blank and click Regenerate to draft via claude -p."
+              }
+              disabled={regenerating}
+              className="resize-none rounded-md border border-zinc-800 bg-zinc-900/60 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-zinc-600 focus:outline-none disabled:opacity-60"
+            />
+          </div>
+
           <div className="flex flex-col-reverse gap-2 pt-2 sm:flex-row sm:justify-end">
             <Button type="button" variant="ghost" onClick={onClose} disabled={submitting}>
               Cancel
             </Button>
-            <Button type="submit" disabled={submitting || !name.trim() || !path.trim()}>
+            <Button
+              type="submit"
+              disabled={submitting || regenerating || !name.trim() || !path.trim()}
+            >
               {submitting ? "Saving…" : "Save changes"}
             </Button>
           </div>

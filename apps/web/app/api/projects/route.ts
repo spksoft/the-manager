@@ -2,9 +2,10 @@ import "server-only";
 import { mkdir, stat } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 import { paths } from "@the-manager/persistence";
-import { newId, ValidationError } from "@the-manager/shared";
+import { newId, type ProjectId, ValidationError } from "@the-manager/shared";
 import { z } from "zod";
 import { handleErr, jsonOk, parseJson } from "../../../lib/api";
+import { scheduleProjectDescriptionGeneration } from "../../../lib/project-description";
 import { repos } from "../../../lib/runtime";
 
 export const dynamic = "force-dynamic";
@@ -14,6 +15,11 @@ const CreateBody = z.object({
   path: z.string().min(1),
   defaultDriver: z.enum(["claude", "codex", "gemini"]),
   ephemeral: z.boolean().optional(),
+  /**
+   * Optional manual override. If omitted or blank we leave the field null and
+   * kick off a background `claude -p` call to draft one.
+   */
+  description: z.string().max(400).optional(),
 });
 
 /** 24 hours, in milliseconds. Ephemeral projects get auto-destroyed past this. */
@@ -56,6 +62,7 @@ export async function POST(req: Request) {
 
     const now = new Date();
     const id = newId.project();
+    const manualDescription = body.description?.trim();
     const project = await repos.projects.add({
       id,
       name: body.name,
@@ -65,7 +72,11 @@ export async function POST(req: Request) {
       lastUsedAt: null,
       ephemeral,
       expiresAt: ephemeral ? new Date(now.getTime() + EPHEMERAL_TTL_MS).toISOString() : null,
+      description: manualDescription && manualDescription.length > 0 ? manualDescription : null,
     });
+    if (!project.description) {
+      scheduleProjectDescriptionGeneration(project.id as ProjectId);
+    }
     return jsonOk(project, { status: 201 });
   } catch (err) {
     return handleErr(err);

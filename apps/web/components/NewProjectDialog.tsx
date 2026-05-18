@@ -21,6 +21,7 @@ interface NewProjectDialogProps {
     path?: string;
     defaultDriver?: DriverId;
     ephemeral?: boolean;
+    description?: string;
   };
   /** Banner above the form explaining why the Manager is asking. */
   reason?: string;
@@ -49,6 +50,7 @@ export function NewProjectDialog({
   const [path, setPath] = useState("");
   const [driver, setDriver] = useState<DriverId>("claude");
   const [ephemeral, setEphemeral] = useState(false);
+  const [description, setDescription] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [browserOpen, setBrowserOpen] = useState(false);
@@ -65,6 +67,7 @@ export function NewProjectDialog({
     setPath(initialValues?.path ?? "");
     setDriver(initialValues?.defaultDriver ?? "claude");
     setEphemeral(initialValues?.ephemeral ?? false);
+    setDescription(initialValues?.description ?? "");
     setError(null);
     firstFieldRef.current?.focus();
   }, [open]);
@@ -93,6 +96,7 @@ export function NewProjectDialog({
     setError(null);
     setSubmitting(true);
     try {
+      const trimmedDescription = description.trim();
       const res = await fetch("/api/projects", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -101,6 +105,7 @@ export function NewProjectDialog({
           path: path.trim(),
           defaultDriver: driver,
           ephemeral,
+          ...(trimmedDescription.length > 0 ? { description: trimmedDescription } : {}),
         }),
       });
       if (!res.ok) {
@@ -112,6 +117,7 @@ export function NewProjectDialog({
       setPath("");
       setDriver("claude");
       setEphemeral(false);
+      setDescription("");
       onCreated(project);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -232,6 +238,25 @@ export function NewProjectDialog({
                 </button>
               ))}
             </div>
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="new-project-description" className="text-sm font-medium text-zinc-300">
+              Description
+              <span className="ml-2 text-[11px] font-normal text-zinc-500">
+                optional — auto-generated via <code className="text-[10px]">claude -p</code> if
+                blank
+              </span>
+            </label>
+            <textarea
+              id="new-project-description"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              rows={2}
+              maxLength={400}
+              placeholder="What is this project? Leave blank to have The Manager draft one."
+              className="resize-none rounded-md border border-zinc-800 bg-zinc-900/60 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-zinc-600 focus:outline-none"
+            />
           </div>
 
           <label className="flex items-start gap-2 rounded-md border border-zinc-800 bg-zinc-900/40 px-3 py-2 text-xs text-zinc-300 hover:border-zinc-700">

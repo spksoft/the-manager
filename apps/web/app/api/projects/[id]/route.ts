@@ -24,9 +24,11 @@ const PatchBody = z
     name: z.string().min(1).max(120).optional(),
     defaultDriver: z.enum(["claude", "codex", "gemini"]).optional(),
     path: z.string().min(1).optional(),
+    /** Pass null to clear; empty string is rejected so callers don't blank by accident. */
+    description: z.string().min(1).max(400).nullable().optional(),
   })
   .refine((o) => Object.keys(o).length > 0, {
-    message: "at least one of name, defaultDriver, path must be provided",
+    message: "at least one of name, defaultDriver, path, description must be provided",
   });
 
 export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }> }) {

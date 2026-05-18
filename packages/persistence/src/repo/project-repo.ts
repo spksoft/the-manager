@@ -5,23 +5,35 @@ import { JsonStore } from "../store";
 
 /**
  * v1 → v2 stamps `ephemeral: false` and `expiresAt: null` on every row.
- * Pre-existing files were written by an older app version that didn't know
- * about ephemeral projects; everything in them is by definition persistent.
+ * v2 → v3 stamps `description: null` so older rows pick up auto-generation on
+ * next manual regenerate (we don't kick it off here — that would mean firing
+ * background claude calls for every legacy row at startup).
  */
 function projectsMigrate(raw: unknown): unknown {
   if (!raw || typeof raw !== "object") return raw;
   const file = raw as { version?: number; data?: unknown };
-  if (file.version === 2) return raw;
-  if (file.version !== 1) return raw;
-  const data = Array.isArray(file.data) ? file.data : [];
-  return {
-    version: 2,
-    data: data.map((row) => {
+  let { version, data } = file;
+  if (version === 3) return raw;
+  if (version !== 1 && version !== 2) return raw;
+  const rows = Array.isArray(data) ? data : [];
+  if (version === 1) {
+    data = rows.map((row) => {
       const r = (row ?? {}) as Record<string, unknown>;
       return {
         ...r,
         ephemeral: r.ephemeral ?? false,
         expiresAt: r.expiresAt ?? null,
+      };
+    });
+    version = 2;
+  }
+  return {
+    version: 3,
+    data: (data as unknown[]).map((row) => {
+      const r = (row ?? {}) as Record<string, unknown>;
+      return {
+        ...r,
+        description: r.description ?? null,
       };
     }),
   };
@@ -32,7 +44,7 @@ export class ProjectRepo {
     paths.projectsIndex(),
     ProjectsIndexSchema,
     () => ({
-      version: 2 as const,
+      version: 3 as const,
       data: [],
     }),
     projectsMigrate,
@@ -65,7 +77,7 @@ export class ProjectRepo {
    */
   async update(
     id: ProjectId,
-    patch: Partial<Pick<ProjectRow, "name" | "defaultDriver" | "path">>,
+    patch: Partial<Pick<ProjectRow, "name" | "defaultDriver" | "path" | "description">>,
   ): Promise<ProjectRow> {
     let result: ProjectRow | null = null;
     await this.store.update((file) => {
