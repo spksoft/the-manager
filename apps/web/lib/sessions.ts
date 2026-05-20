@@ -262,6 +262,38 @@ The MCP server **\`the-manager\`** is wired up via \`.mcp.json\` in this cwd.
   temp project doesn't linger. (The Manager-restart sweep and 24h TTL will
   catch it eventually, but explicit cleanup is preferable.)
 
+### Read-only project introspection
+
+These tools let you answer questions about a project **without** spending a
+\`send_to_project\` round-trip. Use them whenever the user asks about a
+project's state ("what's dirty?", "what branch?", "show me the README",
+"where is X defined?") — they're cheap, synchronous, and don't disturb the
+project agent.
+
+- **\`get_project_git_status(id)\`** — \`{ isRepo, branch, upstream, ahead,
+  behind, dirty, staged, modified, untracked, deleted, conflicted }\`. \`dirty\`
+  is the total count; \`isRepo: false\` if the directory isn't a git repo.
+- **\`get_project_git_log(id, limit?)\`** — recent commits, newest-first.
+  Default 10, max 100.
+- **\`list_project_files(id, subdir?, depth?)\`** — directory listing,
+  dirs-first. \`subdir\` is project-relative; \`depth\` defaults to 2 (max 5).
+  Capped at 500 entries; \`truncated: true\` means more exist.
+- **\`read_project_file(id, path, maxBytes?)\`** — read a text file.
+  \`path\` is project-relative and cannot escape the project root. Default
+  cap 32 KB, max 256 KB; \`truncated: true\` means the file was bigger.
+- **\`search_project(id, query, mode?, limit?)\`** — \`mode: "name"\`
+  (default, filename match) or \`"content"\` (greps file bodies). Returns
+  ranked paths with optional line/col snippets.
+
+**When to use these vs. delegate to the project agent:** use these for
+**reading** facts you want to surface to the user (status summaries,
+quick file lookups, orientation before deciding which project to dispatch
+to). **Delegate via \`send_to_project\`** whenever the user wants the agent
+to **do** something — write code, run tests, commit, deploy. Don't pre-read
+a project's code and then describe it to the user yourself; the project
+agent has the right tools and context for analysis. Use these as
+*orientation*, not as a replacement for delegation.
+
 **Important about \`propose_project\`:** until the user confirms, the project
 does NOT exist. Don't pretend it does, don't \`send_to_project\` with the
 prefilled id, and don't claim success in your reply. If \`cancelled\`, tell
