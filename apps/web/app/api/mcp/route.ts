@@ -1,6 +1,13 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
-import { paths } from "@the-manager/persistence";
+import {
+  appendMemory,
+  listMemoryScopes,
+  type MemoryScope,
+  paths,
+  readMemory,
+  writeMemory,
+} from "@the-manager/persistence";
 import type { DriverId, ProjectId } from "@the-manager/shared";
 import { enqueueProjectProposal } from "../../../lib/manager-requests";
 import {
@@ -51,6 +58,10 @@ export const runtime = "nodejs";
  *   - list_project_files / read_project_file / search_project: read-only fs
  *     introspection over a project's working tree. Honors the same IGNORED
  *     set the Files tab uses, and refuses paths that escape the project root.
+ *   - memory_read / memory_write / memory_append / memory_list: long-term
+ *     memory the Manager keeps in `~/.the-manager/manager/memory/`. Scoped
+ *     either globally (`global.md`) or per-project (`projects/<id>.md`); no
+ *     memory file is ever written inside a user project directory.
  */
 
 interface JsonRpcRequest {
@@ -276,6 +287,76 @@ const TOOLS = [
         },
       },
       required: ["id", "query"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "memory_read",
+    description:
+      "Read a memory file. Omit `projectId` for the global memory (`~/.the-manager/manager/memory/global.md`); pass `projectId` for per-project memory (`projects/<id>.md`). Returns `{ scope, exists, content, sizeBytes, mtime }`. `exists: false` (with empty `content`) is normal — no error — when nothing has been written yet. Call this on the first message of every session to refresh long-term context.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectId: {
+          type: "string",
+          description: "Project id for per-project memory. Omit for global memory.",
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "memory_append",
+    description:
+      "Append a note to a memory file. Omit `projectId` for global memory; pass `projectId` for per-project memory. Inserts a timestamped block (optionally with an `## <heading>`) so the file stays browsable. Use this for incremental observations during a session (decisions made, user preferences observed, gotchas worth remembering). Returns the new size + mtime.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectId: {
+          type: "string",
+          description: "Project id for per-project memory. Omit for global memory.",
+        },
+        text: {
+          type: "string",
+          description: "Markdown body to append (a timestamp is added for you).",
+        },
+        heading: {
+          type: "string",
+          description:
+            "Optional short heading; rendered as `## <heading>` above the timestamp.",
+        },
+      },
+      required: ["text"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "memory_write",
+    description:
+      "Replace a memory file's entire contents. Use sparingly — `memory_append` is safer because it preserves history. Omit `projectId` for global memory. Useful when you've decided to restructure the file (e.g. consolidate fragments under new headings). Returns the new size + mtime.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectId: {
+          type: "string",
+          description: "Project id for per-project memory. Omit for global memory.",
+        },
+        content: {
+          type: "string",
+          description: "Full new contents (markdown). Replaces whatever was there.",
+        },
+      },
+      required: ["content"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "memory_list",
+    description:
+      "Index of every memory file. Returns `{ global: { exists, sizeBytes, mtime }, projects: [{ projectId, exists, sizeBytes, mtime }, ...] }`. Only summarises projects that are currently registered — orphan memory files (from removed projects) are not listed. Use this to decide whether to load a particular per-project memory or not.",
+    inputSchema: {
+      type: "object",
+      properties: {},
       additionalProperties: false,
     },
   },
@@ -519,9 +600,59 @@ async function callTool(rawParams: unknown): Promise<ToolResult> {
         return errorResult(`search_project failed: ${errMsg(err)}`);
       }
     }
+    case "memory_read": {
+      const scope = memoryScopeArg(args);
+      try {
+        const result = await readMemory(scope);
+        return textResult(JSON.stringify(result, null, 2));
+      } catch (err) {
+        return errorResult(`memory_read failed: ${errMsg(err)}`);
+      }
+    }
+    case "memory_append": {
+      const scope = memoryScopeArg(args);
+      const text = stringArg(args, "text");
+      const heading = optionalStringArg(args, "heading");
+      try {
+        const result = await appendMemory(scope, text, heading);
+        return textResult(JSON.stringify(result, null, 2));
+      } catch (err) {
+        return errorResult(`memory_append failed: ${errMsg(err)}`);
+      }
+    }
+    case "memory_write": {
+      const scope = memoryScopeArg(args);
+      const content = stringArg(args, "content");
+      try {
+        const result = await writeMemory(scope, content);
+        return textResult(JSON.stringify(result, null, 2));
+      } catch (err) {
+        return errorResult(`memory_write failed: ${errMsg(err)}`);
+      }
+    }
+    case "memory_list": {
+      try {
+        const projects = await repos.projects.list();
+        const result = await listMemoryScopes(projects.map((p) => p.id));
+        return textResult(JSON.stringify(result, null, 2));
+      } catch (err) {
+        return errorResult(`memory_list failed: ${errMsg(err)}`);
+      }
+    }
     default:
       return errorResult(`unknown tool: ${name}`);
   }
+}
+
+/**
+ * `projectId` arg is optional — its presence picks per-project scope, its
+ * absence picks global. Centralised here so all four memory tools agree on
+ * the convention.
+ */
+function memoryScopeArg(args: Record<string, unknown>): MemoryScope {
+  const projectId = optionalStringArg(args, "projectId");
+  if (projectId === undefined) return "global";
+  return { projectId };
 }
 
 function errMsg(err: unknown): string {

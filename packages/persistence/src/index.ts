@@ -1,3 +1,4 @@
+export * from "./manager-memory";
 export * from "./migrate";
 export * from "./paths";
 export * from "./repo/agent-repo";

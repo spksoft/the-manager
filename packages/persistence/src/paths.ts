@@ -43,6 +43,17 @@ export const paths = {
     join(getHomeRoot(), "projects", projectId, "sessions", sessionId, "transcript.jsonl"),
   managerCwd: () => join(getHomeRoot(), "manager", "cwd"),
   /**
+   * Long-term memory the Manager keeps about itself and its projects. Lives
+   * under the Manager's storage root (NOT inside any project directory) so
+   * uninstalling The Manager leaves no trace in user projects. Markdown by
+   * convention; readable/editable by the user via the Manager's Files tab.
+   */
+  managerMemoryDir: () => join(getHomeRoot(), "manager", "memory"),
+  managerGlobalMemoryFile: () => join(getHomeRoot(), "manager", "memory", "global.md"),
+  managerProjectsMemoryDir: () => join(getHomeRoot(), "manager", "memory", "projects"),
+  managerProjectMemoryFile: (projectId: string) =>
+    join(getHomeRoot(), "manager", "memory", "projects", `${projectId}.md`),
+  /**
    * Root for Manager-created ephemeral project directories. `destroy_temp_project`
    * only `rm -rf`s paths that live underneath this, so it can never wipe a
    * user-registered project directory.
