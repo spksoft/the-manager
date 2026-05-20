@@ -113,11 +113,9 @@ export async function getProjectGitLog(
   }
   const [branch, log] = await Promise.all([
     view.currentBranch(),
-    view
-      .log(limit)
-      .catch(() => ({
-        all: [] as { hash: string; date: string; message: string; author_name: string }[],
-      })),
+    view.log(limit).catch(() => ({
+      all: [] as { hash: string; date: string; message: string; author_name: string }[],
+    })),
   ]);
   return {
     isRepo: true,
