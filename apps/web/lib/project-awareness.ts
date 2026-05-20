@@ -1,5 +1,5 @@
 import "server-only";
-import { readFile, readdir, stat } from "node:fs/promises";
+import { readdir, readFile, stat } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { GitView } from "@the-manager/git";
 import type { ProjectId } from "@the-manager/shared";
@@ -113,7 +113,11 @@ export async function getProjectGitLog(
   }
   const [branch, log] = await Promise.all([
     view.currentBranch(),
-    view.log(limit).catch(() => ({ all: [] as { hash: string; date: string; message: string; author_name: string }[] })),
+    view
+      .log(limit)
+      .catch(() => ({
+        all: [] as { hash: string; date: string; message: string; author_name: string }[],
+      })),
   ]);
   return {
     isRepo: true,

@@ -206,14 +206,15 @@ const TOOLS = [
   {
     name: "list_project_files",
     description:
-      "List files and directories inside a project, optionally rooted at a subdirectory. Honors the standard ignore set (node_modules, .git, .next, dist, etc.). Returns `{ root, entries: [{ path, type, sizeBytes? }, ...], truncated }`, dirs first, capped at 500 entries. `subdir` is project-relative (default `\"\"` = project root); `depth` is how many directory levels below `subdir` to descend (default 2, max 5). Use this to orient yourself in a project before reading specific files.",
+      'List files and directories inside a project, optionally rooted at a subdirectory. Honors the standard ignore set (node_modules, .git, .next, dist, etc.). Returns `{ root, entries: [{ path, type, sizeBytes? }, ...], truncated }`, dirs first, capped at 500 entries. `subdir` is project-relative (default `""` = project root); `depth` is how many directory levels below `subdir` to descend (default 2, max 5). Use this to orient yourself in a project before reading specific files.',
     inputSchema: {
       type: "object",
       properties: {
         id: { type: "string", description: "Project id." },
         subdir: {
           type: "string",
-          description: "Project-relative subdirectory to root the listing at. Default project root.",
+          description:
+            "Project-relative subdirectory to root the listing at. Default project root.",
         },
         depth: {
           type: "number",
@@ -252,7 +253,7 @@ const TOOLS = [
   {
     name: "search_project",
     description:
-      "Search a project's working tree. `mode: \"name\"` (default) ranks files by filename match; `mode: \"content\"` greps file contents and returns short snippets. Returns `{ query, mode, results: [{ path, score, matches?: [{ line, col, preview }] }, ...], truncated }`. Best for orienting yourself before calling `read_project_file` or before deciding which project to delegate to. `limit` defaults to 20, max 50.",
+      'Search a project\'s working tree. `mode: "name"` (default) ranks files by filename match; `mode: "content"` greps file contents and returns short snippets. Returns `{ query, mode, results: [{ path, score, matches?: [{ line, col, preview }] }, ...], truncated }`. Best for orienting yourself before calling `read_project_file` or before deciding which project to delegate to. `limit` defaults to 20, max 50.',
     inputSchema: {
       type: "object",
       properties: {
