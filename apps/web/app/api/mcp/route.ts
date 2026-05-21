@@ -322,8 +322,7 @@ const TOOLS = [
         },
         heading: {
           type: "string",
-          description:
-            "Optional short heading; rendered as `## <heading>` above the timestamp.",
+          description: "Optional short heading; rendered as `## <heading>` above the timestamp.",
         },
       },
       required: ["text"],
