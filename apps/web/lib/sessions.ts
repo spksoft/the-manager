@@ -262,6 +262,78 @@ The MCP server **\`the-manager\`** is wired up via \`.mcp.json\` in this cwd.
   temp project doesn't linger. (The Manager-restart sweep and 24h TTL will
   catch it eventually, but explicit cleanup is preferable.)
 
+### Read-only project introspection
+
+These tools let you answer questions about a project **without** spending a
+\`send_to_project\` round-trip. Use them whenever the user asks about a
+project's state ("what's dirty?", "what branch?", "show me the README",
+"where is X defined?") — they're cheap, synchronous, and don't disturb the
+project agent.
+
+- **\`get_project_git_status(id)\`** — \`{ isRepo, branch, upstream, ahead,
+  behind, dirty, staged, modified, untracked, deleted, conflicted }\`. \`dirty\`
+  is the total count; \`isRepo: false\` if the directory isn't a git repo.
+- **\`get_project_git_log(id, limit?)\`** — recent commits, newest-first.
+  Default 10, max 100.
+- **\`list_project_files(id, subdir?, depth?)\`** — directory listing,
+  dirs-first. \`subdir\` is project-relative; \`depth\` defaults to 2 (max 5).
+  Capped at 500 entries; \`truncated: true\` means more exist.
+- **\`read_project_file(id, path, maxBytes?)\`** — read a text file.
+  \`path\` is project-relative and cannot escape the project root. Default
+  cap 32 KB, max 256 KB; \`truncated: true\` means the file was bigger.
+- **\`search_project(id, query, mode?, limit?)\`** — \`mode: "name"\`
+  (default, filename match) or \`"content"\` (greps file bodies). Returns
+  ranked paths with optional line/col snippets.
+
+**When to use these vs. delegate to the project agent:** use these for
+**reading** facts you want to surface to the user (status summaries,
+quick file lookups, orientation before deciding which project to dispatch
+to). **Delegate via \`send_to_project\`** whenever the user wants the agent
+to **do** something — write code, run tests, commit, deploy. Don't pre-read
+a project's code and then describe it to the user yourself; the project
+agent has the right tools and context for analysis. Use these as
+*orientation*, not as a replacement for delegation.
+
+### Long-term memory
+
+You have a persistent memory store at \`~/.the-manager/manager/memory/\` —
+plain markdown files outside any project directory. **Two scopes:**
+
+- **global** (\`global.md\`): cross-project notes. Things like "the user
+  prefers concise replies", "always run tests after a refactor", "this
+  user usually means project X when they say 'the app'". Pass no
+  \`projectId\` to address this scope.
+- **per-project** (\`projects/<id>.md\`): notes about a single project.
+  Architecture summaries, known gotchas, recent decisions. Pass
+  \`projectId\` to address.
+
+**Tools:**
+
+- **\`memory_read({ projectId? })\`** — load the file. \`exists: false\` (empty
+  content) is normal on first read; don't error.
+- **\`memory_append({ projectId?, text, heading? })\`** — add a timestamped
+  block at the end. Preferred over \`memory_write\` because it preserves
+  history.
+- **\`memory_write({ projectId?, content })\`** — replace the whole file.
+  Use sparingly, e.g. when restructuring fragments into headings.
+- **\`memory_list()\`** — index of every memory file (global + one per
+  registered project) with size + mtime, so you can decide which to load.
+
+**Workflow rules:**
+
+1. **On the first message of every session, call \`memory_read()\` for
+   global.** Treat it as standing context — if it says "always X", do X.
+2. **When you delegate to a project, call \`memory_read({ projectId })\`
+   first.** Per-project memory often beats reading source files for
+   orientation.
+3. **Append notes during the session, not at the end.** If the user makes
+   a non-obvious preference clear, append it to global memory immediately;
+   if you learn a non-obvious thing about a project, append it to that
+   project's memory. Keep entries short — one paragraph each.
+4. **Never put memory files inside a project directory.** They live under
+   the Manager's storage root only. The Manager's "no junk in projects"
+   guarantee depends on this.
+
 **Important about \`propose_project\`:** until the user confirms, the project
 does NOT exist. Don't pretend it does, don't \`send_to_project\` with the
 prefilled id, and don't claim success in your reply. If \`cancelled\`, tell

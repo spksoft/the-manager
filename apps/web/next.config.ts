@@ -5,9 +5,9 @@ import type { NextConfig } from "next";
 // Read the repo-root version so the Preferences panel can render it. The
 // release script bumps the root + desktop package.json together, so the root
 // is the canonical app version (apps/web/package.json is unrelated).
-const rootPkg = JSON.parse(
-  readFileSync(join(__dirname, "..", "..", "package.json"), "utf8"),
-) as { version: string };
+const rootPkg = JSON.parse(readFileSync(join(__dirname, "..", "..", "package.json"), "utf8")) as {
+  version: string;
+};
 
 const config: NextConfig = {
   env: {

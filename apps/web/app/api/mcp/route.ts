@@ -1,8 +1,22 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
-import { paths } from "@the-manager/persistence";
+import {
+  appendMemory,
+  listMemoryScopes,
+  type MemoryScope,
+  paths,
+  readMemory,
+  writeMemory,
+} from "@the-manager/persistence";
 import type { DriverId, ProjectId } from "@the-manager/shared";
 import { enqueueProjectProposal } from "../../../lib/manager-requests";
+import {
+  getProjectGitLog,
+  getProjectGitStatus,
+  listProjectFiles,
+  readProjectFile,
+  searchProject,
+} from "../../../lib/project-awareness";
 import { repos } from "../../../lib/runtime";
 import {
   getOrCreateSession,
@@ -38,6 +52,16 @@ export const runtime = "nodejs";
  *     confirms or cancels).
  *   - destroy_temp_project: tear down an ephemeral project that the Manager
  *     created earlier; refuses non-ephemeral projects.
+ *   - get_project_git_status / get_project_git_log: read-only git introspection
+ *     so the Manager doesn't have to round-trip through `send_to_project` to
+ *     answer "what branch / what's dirty / what's recent".
+ *   - list_project_files / read_project_file / search_project: read-only fs
+ *     introspection over a project's working tree. Honors the same IGNORED
+ *     set the Files tab uses, and refuses paths that escape the project root.
+ *   - memory_read / memory_write / memory_append / memory_list: long-term
+ *     memory the Manager keeps in `~/.the-manager/manager/memory/`. Scoped
+ *     either globally (`global.md`) or per-project (`projects/<id>.md`); no
+ *     memory file is ever written inside a user project directory.
  */
 
 interface JsonRpcRequest {
@@ -155,6 +179,183 @@ const TOOLS = [
         id: { type: "string", description: "Ephemeral project id." },
       },
       required: ["id"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "get_project_git_status",
+    description:
+      "Read-only git status for a project. Returns `{ isRepo, branch, upstream, ahead, behind, dirty, staged[], modified[], untracked[], deleted[], conflicted[] }`. `dirty` is the total count across categories — 0 means a clean tree. `isRepo: false` if the project's directory isn't a git repo (no error). Cheap; safe to call before deciding whether to delegate work that depends on a clean tree.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Project id from list_projects." },
+      },
+      required: ["id"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "get_project_git_log",
+    description:
+      "Recent commits for a project. Returns `{ isRepo, branch, commits: [{ hash, date, author, subject }, ...] }` newest-first. `limit` defaults to 10, max 100. `isRepo: false` if the project isn't a git repo (no error).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Project id." },
+        limit: {
+          type: "number",
+          description: "Number of commits to return. Default 10, max 100.",
+          minimum: 1,
+          maximum: 100,
+        },
+      },
+      required: ["id"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "list_project_files",
+    description:
+      'List files and directories inside a project, optionally rooted at a subdirectory. Honors the standard ignore set (node_modules, .git, .next, dist, etc.). Returns `{ root, entries: [{ path, type, sizeBytes? }, ...], truncated }`, dirs first, capped at 500 entries. `subdir` is project-relative (default `""` = project root); `depth` is how many directory levels below `subdir` to descend (default 2, max 5). Use this to orient yourself in a project before reading specific files.',
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Project id." },
+        subdir: {
+          type: "string",
+          description:
+            "Project-relative subdirectory to root the listing at. Default project root.",
+        },
+        depth: {
+          type: "number",
+          description: "How many directory levels to descend. Default 2, max 5.",
+          minimum: 0,
+          maximum: 5,
+        },
+      },
+      required: ["id"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "read_project_file",
+    description:
+      "Read a text file from a project. Returns `{ path, sizeBytes, mtime, content, truncated }`. `path` is project-relative — paths that escape the project root are rejected. Content is decoded as UTF-8 and capped at `maxBytes` (default 32 KB, max 256 KB); `truncated: true` means the file was larger than the cap and only the first `maxBytes` were returned.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Project id." },
+        path: {
+          type: "string",
+          description: "Project-relative file path (must not escape the project root).",
+        },
+        maxBytes: {
+          type: "number",
+          description: "Cap on returned bytes. Default 32768, max 262144.",
+          minimum: 1,
+          maximum: 262144,
+        },
+      },
+      required: ["id", "path"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "search_project",
+    description:
+      'Search a project\'s working tree. `mode: "name"` (default) ranks files by filename match; `mode: "content"` greps file contents and returns short snippets. Returns `{ query, mode, results: [{ path, score, matches?: [{ line, col, preview }] }, ...], truncated }`. Best for orienting yourself before calling `read_project_file` or before deciding which project to delegate to. `limit` defaults to 20, max 50.',
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Project id." },
+        query: {
+          type: "string",
+          description: "Search string (minimum 2 chars).",
+          minLength: 2,
+        },
+        mode: {
+          type: "string",
+          enum: ["name", "content"],
+          description: "`name` = filename match (cheap). `content` = grep file bodies.",
+        },
+        limit: {
+          type: "number",
+          description: "Maximum number of results. Default 20, max 50.",
+          minimum: 1,
+          maximum: 50,
+        },
+      },
+      required: ["id", "query"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "memory_read",
+    description:
+      "Read a memory file. Omit `projectId` for the global memory (`~/.the-manager/manager/memory/global.md`); pass `projectId` for per-project memory (`projects/<id>.md`). Returns `{ scope, exists, content, sizeBytes, mtime }`. `exists: false` (with empty `content`) is normal — no error — when nothing has been written yet. Call this on the first message of every session to refresh long-term context.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectId: {
+          type: "string",
+          description: "Project id for per-project memory. Omit for global memory.",
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "memory_append",
+    description:
+      "Append a note to a memory file. Omit `projectId` for global memory; pass `projectId` for per-project memory. Inserts a timestamped block (optionally with an `## <heading>`) so the file stays browsable. Use this for incremental observations during a session (decisions made, user preferences observed, gotchas worth remembering). Returns the new size + mtime.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectId: {
+          type: "string",
+          description: "Project id for per-project memory. Omit for global memory.",
+        },
+        text: {
+          type: "string",
+          description: "Markdown body to append (a timestamp is added for you).",
+        },
+        heading: {
+          type: "string",
+          description: "Optional short heading; rendered as `## <heading>` above the timestamp.",
+        },
+      },
+      required: ["text"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "memory_write",
+    description:
+      "Replace a memory file's entire contents. Use sparingly — `memory_append` is safer because it preserves history. Omit `projectId` for global memory. Useful when you've decided to restructure the file (e.g. consolidate fragments under new headings). Returns the new size + mtime.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectId: {
+          type: "string",
+          description: "Project id for per-project memory. Omit for global memory.",
+        },
+        content: {
+          type: "string",
+          description: "Full new contents (markdown). Replaces whatever was there.",
+        },
+      },
+      required: ["content"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "memory_list",
+    description:
+      "Index of every memory file. Returns `{ global: { exists, sizeBytes, mtime }, projects: [{ projectId, exists, sizeBytes, mtime }, ...] }`. Only summarises projects that are currently registered — orphan memory files (from removed projects) are not listed. Use this to decide whether to load a particular per-project memory or not.",
+    inputSchema: {
+      type: "object",
+      properties: {},
       additionalProperties: false,
     },
   },
@@ -341,9 +542,120 @@ async function callTool(rawParams: unknown): Promise<ToolResult> {
       }
       return textResult(JSON.stringify(result, null, 2));
     }
+    case "get_project_git_status": {
+      const id = stringArg(args, "id");
+      try {
+        const summary = await getProjectGitStatus(id as ProjectId);
+        return textResult(JSON.stringify(summary, null, 2));
+      } catch (err) {
+        return errorResult(`get_project_git_status failed: ${errMsg(err)}`);
+      }
+    }
+    case "get_project_git_log": {
+      const id = stringArg(args, "id");
+      const limit = clampInt(args.limit, 10, 1, 100);
+      try {
+        const summary = await getProjectGitLog(id as ProjectId, limit);
+        return textResult(JSON.stringify(summary, null, 2));
+      } catch (err) {
+        return errorResult(`get_project_git_log failed: ${errMsg(err)}`);
+      }
+    }
+    case "list_project_files": {
+      const id = stringArg(args, "id");
+      const subdir = optionalStringArg(args, "subdir") ?? "";
+      const depth = clampInt(args.depth, 2, 0, 5);
+      try {
+        const tree = await listProjectFiles(id as ProjectId, subdir, depth);
+        return textResult(JSON.stringify(tree, null, 2));
+      } catch (err) {
+        return errorResult(`list_project_files failed: ${errMsg(err)}`);
+      }
+    }
+    case "read_project_file": {
+      const id = stringArg(args, "id");
+      const path = stringArg(args, "path");
+      const maxBytes = clampInt(args.maxBytes, 32 * 1024, 1, 256 * 1024);
+      try {
+        const file = await readProjectFile(id as ProjectId, path, maxBytes);
+        return textResult(JSON.stringify(file, null, 2));
+      } catch (err) {
+        return errorResult(`read_project_file failed: ${errMsg(err)}`);
+      }
+    }
+    case "search_project": {
+      const id = stringArg(args, "id");
+      const query = stringArg(args, "query");
+      if (query.length < 2) {
+        return errorResult("search_project query must be at least 2 characters.");
+      }
+      const modeRaw = optionalStringArg(args, "mode");
+      const mode: "name" | "content" = modeRaw === "content" ? "content" : "name";
+      const limit = clampInt(args.limit, 20, 1, 50);
+      try {
+        const summary = await searchProject(id as ProjectId, query, mode, limit);
+        return textResult(JSON.stringify(summary, null, 2));
+      } catch (err) {
+        return errorResult(`search_project failed: ${errMsg(err)}`);
+      }
+    }
+    case "memory_read": {
+      const scope = memoryScopeArg(args);
+      try {
+        const result = await readMemory(scope);
+        return textResult(JSON.stringify(result, null, 2));
+      } catch (err) {
+        return errorResult(`memory_read failed: ${errMsg(err)}`);
+      }
+    }
+    case "memory_append": {
+      const scope = memoryScopeArg(args);
+      const text = stringArg(args, "text");
+      const heading = optionalStringArg(args, "heading");
+      try {
+        const result = await appendMemory(scope, text, heading);
+        return textResult(JSON.stringify(result, null, 2));
+      } catch (err) {
+        return errorResult(`memory_append failed: ${errMsg(err)}`);
+      }
+    }
+    case "memory_write": {
+      const scope = memoryScopeArg(args);
+      const content = stringArg(args, "content");
+      try {
+        const result = await writeMemory(scope, content);
+        return textResult(JSON.stringify(result, null, 2));
+      } catch (err) {
+        return errorResult(`memory_write failed: ${errMsg(err)}`);
+      }
+    }
+    case "memory_list": {
+      try {
+        const projects = await repos.projects.list();
+        const result = await listMemoryScopes(projects.map((p) => p.id));
+        return textResult(JSON.stringify(result, null, 2));
+      } catch (err) {
+        return errorResult(`memory_list failed: ${errMsg(err)}`);
+      }
+    }
     default:
       return errorResult(`unknown tool: ${name}`);
   }
+}
+
+/**
+ * `projectId` arg is optional — its presence picks per-project scope, its
+ * absence picks global. Centralised here so all four memory tools agree on
+ * the convention.
+ */
+function memoryScopeArg(args: Record<string, unknown>): MemoryScope {
+  const projectId = optionalStringArg(args, "projectId");
+  if (projectId === undefined) return "global";
+  return { projectId };
+}
+
+function errMsg(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
 function optionalStringArg(args: Record<string, unknown>, key: string): string | undefined {
