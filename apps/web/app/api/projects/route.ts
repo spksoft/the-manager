@@ -20,6 +20,8 @@ const CreateBody = z.object({
    * kick off a background `claude -p` call to draft one.
    */
   description: z.string().max(400).optional(),
+  /** Optional initial tags. Empty array if omitted. Trimmed + deduped server-side. */
+  tags: z.array(z.string().min(1).max(40)).max(20).optional(),
 });
 
 /** 24 hours, in milliseconds. Ephemeral projects get auto-destroyed past this. */
@@ -31,6 +33,26 @@ export async function GET() {
   } catch (err) {
     return handleErr(err);
   }
+}
+
+/**
+ * Trim, drop empties, dedupe (case-insensitive). Tag input from a free-text
+ * box invariably contains stray whitespace and accidental duplicates, and we
+ * don't want to surface either to the Manager via `list_projects`.
+ */
+export function normaliseTags(input: string[] | undefined): string[] {
+  if (!input) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of input) {
+    const trimmed = raw.trim();
+    if (trimmed.length === 0) continue;
+    const key = trimmed.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(trimmed);
+  }
+  return out;
 }
 
 export async function POST(req: Request) {
@@ -73,6 +95,7 @@ export async function POST(req: Request) {
       ephemeral,
       expiresAt: ephemeral ? new Date(now.getTime() + EPHEMERAL_TTL_MS).toISOString() : null,
       description: manualDescription && manualDescription.length > 0 ? manualDescription : null,
+      tags: normaliseTags(body.tags),
     });
     if (!project.description) {
       scheduleProjectDescriptionGeneration(project.id as ProjectId);

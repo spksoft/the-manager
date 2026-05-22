@@ -6,6 +6,7 @@ import { z } from "zod";
 import { handleErr, jsonOk, parseJson } from "../../../../lib/api";
 import { repos } from "../../../../lib/runtime";
 import { endSession } from "../../../../lib/sessions";
+import { normaliseTags } from "../route";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -26,15 +27,20 @@ const PatchBody = z
     path: z.string().min(1).optional(),
     /** Pass null to clear; empty string is rejected so callers don't blank by accident. */
     description: z.string().min(1).max(400).nullable().optional(),
+    /** Full replacement of the tag list. Pass `[]` to clear. */
+    tags: z.array(z.string().min(1).max(40)).max(20).optional(),
   })
   .refine((o) => Object.keys(o).length > 0, {
-    message: "at least one of name, defaultDriver, path, description must be provided",
+    message: "at least one of name, defaultDriver, path, description, tags must be provided",
   });
 
 export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await ctx.params;
     const patch = await parseJson(req, PatchBody);
+    if (patch.tags !== undefined) {
+      patch.tags = normaliseTags(patch.tags);
+    }
     if (patch.path !== undefined) {
       if (!isAbsolute(patch.path)) throw new ValidationError("path must be absolute");
       try {

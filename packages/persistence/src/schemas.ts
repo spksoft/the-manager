@@ -26,11 +26,17 @@ export const ProjectSchema = z.object({
    * the project. `null` means generation hasn't completed yet (or failed).
    */
   description: z.string().nullable(),
+  /**
+   * Free-form labels the user (or the Manager) attaches to help routing —
+   * "infra", "frontend", "prod", whatever. Always present (empty array =
+   * untagged) so consumers don't have to null-check. Order is preserved.
+   */
+  tags: z.array(z.string()),
 });
 export type ProjectRow = z.infer<typeof ProjectSchema>;
 
 export const ProjectsIndexSchema = z.object({
-  version: z.literal(3),
+  version: z.literal(4),
   data: z.array(ProjectSchema),
 });
 
