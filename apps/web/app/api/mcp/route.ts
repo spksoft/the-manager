@@ -62,6 +62,9 @@ export const runtime = "nodejs";
  *     memory the Manager keeps in `~/.the-manager/manager/memory/`. Scoped
  *     either globally (`global.md`) or per-project (`projects/<id>.md`); no
  *     memory file is ever written inside a user project directory.
+ *   - set_project_tags / find_projects: routing labels. Tags live on the
+ *     project row (no extra files) so they survive across sessions and
+ *     restarts without writing anything into the project directory.
  */
 
 interface JsonRpcRequest {
@@ -359,6 +362,49 @@ const TOOLS = [
       additionalProperties: false,
     },
   },
+  {
+    name: "set_project_tags",
+    description:
+      "Replace a project's tags. Tags are free-form labels (e.g. `infra`, `frontend`, `prod`) the user or the Manager uses to route work. Pass the full new list — this is a replacement, not a merge; pass `[]` to clear. Whitespace is trimmed and duplicates (case-insensitive) are dropped server-side. Returns the updated project row.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Project id." },
+        tags: {
+          type: "array",
+          items: { type: "string", minLength: 1, maxLength: 40 },
+          maxItems: 20,
+          description: "Full replacement list. Empty array clears all tags.",
+        },
+      },
+      required: ["id", "tags"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "find_projects",
+    description:
+      'Filter `list_projects` server-side. All filters are AND-ed; omitting a filter means "any". `tags` matches a project that has every listed tag (case-insensitive). `namePattern` / `pathPattern` are substring matches against the project\'s name / path (case-insensitive, not regex). Returns the same shape as `list_projects` (id, name, path, defaultDriver, ephemeral, expiresAt, description, tags) for matched rows. Cheaper than pulling everything from `list_projects` and re-filtering when the user gives a routing hint like "the frontend project".',
+    inputSchema: {
+      type: "object",
+      properties: {
+        tags: {
+          type: "array",
+          items: { type: "string", minLength: 1 },
+          description: "Match projects that have ALL of these tags (case-insensitive).",
+        },
+        namePattern: {
+          type: "string",
+          description: "Case-insensitive substring match against the project name.",
+        },
+        pathPattern: {
+          type: "string",
+          description: "Case-insensitive substring match against the project path.",
+        },
+      },
+      additionalProperties: false,
+    },
+  },
 ];
 
 interface ToolResult {
@@ -417,16 +463,7 @@ async function callTool(rawParams: unknown): Promise<ToolResult> {
   switch (name) {
     case "list_projects": {
       const projects = await repos.projects.list();
-      const summary = projects.map((p) => ({
-        id: p.id,
-        name: p.name,
-        path: p.path,
-        defaultDriver: p.defaultDriver,
-        ephemeral: p.ephemeral,
-        expiresAt: p.expiresAt,
-        description: p.description,
-      }));
-      return textResult(JSON.stringify(summary, null, 2));
+      return textResult(JSON.stringify(projects.map(summariseProject), null, 2));
     }
     case "get_project_status": {
       const id = stringArg(args, "id");
@@ -638,9 +675,84 @@ async function callTool(rawParams: unknown): Promise<ToolResult> {
         return errorResult(`memory_list failed: ${errMsg(err)}`);
       }
     }
+    case "set_project_tags": {
+      const id = stringArg(args, "id");
+      const rawTags = args.tags;
+      if (!Array.isArray(rawTags)) {
+        return errorResult("set_project_tags: `tags` must be an array of strings.");
+      }
+      const tags: string[] = [];
+      const seen = new Set<string>();
+      for (const t of rawTags) {
+        if (typeof t !== "string") {
+          return errorResult("set_project_tags: every tag must be a string.");
+        }
+        const trimmed = t.trim();
+        if (trimmed.length === 0 || trimmed.length > 40) continue;
+        const key = trimmed.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        tags.push(trimmed);
+      }
+      if (tags.length > 20) tags.length = 20;
+      try {
+        const updated = await repos.projects.update(id as ProjectId, { tags });
+        return textResult(JSON.stringify(summariseProject(updated), null, 2));
+      } catch (err) {
+        return errorResult(`set_project_tags failed: ${errMsg(err)}`);
+      }
+    }
+    case "find_projects": {
+      const rawTags = args.tags;
+      const wantedTags: string[] = [];
+      if (Array.isArray(rawTags)) {
+        for (const t of rawTags) {
+          if (typeof t === "string" && t.trim().length > 0) {
+            wantedTags.push(t.trim().toLowerCase());
+          }
+        }
+      }
+      const namePattern = optionalStringArg(args, "namePattern")?.toLowerCase();
+      const pathPattern = optionalStringArg(args, "pathPattern")?.toLowerCase();
+      try {
+        const projects = await repos.projects.list();
+        const matched = projects.filter((p) => {
+          if (namePattern && !p.name.toLowerCase().includes(namePattern)) return false;
+          if (pathPattern && !p.path.toLowerCase().includes(pathPattern)) return false;
+          if (wantedTags.length > 0) {
+            const have = new Set(p.tags.map((t) => t.toLowerCase()));
+            for (const w of wantedTags) {
+              if (!have.has(w)) return false;
+            }
+          }
+          return true;
+        });
+        return textResult(JSON.stringify(matched.map(summariseProject), null, 2));
+      } catch (err) {
+        return errorResult(`find_projects failed: ${errMsg(err)}`);
+      }
+    }
     default:
       return errorResult(`unknown tool: ${name}`);
   }
+}
+
+/**
+ * The compact shape we expose to the Manager via list_projects / find_projects.
+ * Keeping it in one place so the two tools (and any future variants) can't
+ * drift apart.
+ */
+function summariseProject(p: Awaited<ReturnType<typeof repos.projects.get>>) {
+  return {
+    id: p.id,
+    name: p.name,
+    path: p.path,
+    defaultDriver: p.defaultDriver,
+    ephemeral: p.ephemeral,
+    expiresAt: p.expiresAt,
+    description: p.description,
+    tags: p.tags,
+  };
 }
 
 /**

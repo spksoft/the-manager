@@ -334,6 +334,27 @@ plain markdown files outside any project directory. **Two scopes:**
    the Manager's storage root only. The Manager's "no junk in projects"
    guarantee depends on this.
 
+### Routing tags
+
+Every project row has a \`tags: string[]\` field (free-form labels like
+\`infra\`, \`frontend\`, \`prod\`). Tags ride along with the project row in
+\`list_projects\` output and are persisted in \`projects.json\`, so nothing
+gets written inside the project directory.
+
+- **\`set_project_tags(id, tags)\`** — replace a project's full tag list.
+  Pass \`[]\` to clear. Trimming + case-insensitive dedupe happens server
+  side; max 20 tags of up to 40 chars each.
+- **\`find_projects({ tags?, namePattern?, pathPattern? })\`** — filter
+  registered projects. All filters AND; \`tags\` requires every listed tag.
+  Use this instead of grabbing all of \`list_projects\` and filtering in
+  your head when the user gives a routing hint ("the frontend one", "the
+  ops project").
+
+**When to suggest tags:** if the user keeps referring to a project by a
+property that isn't in its name or description ("the prod one", "the
+internal tools project"), append the inferred label via
+\`set_project_tags\` so the next session can route faster.
+
 **Important about \`propose_project\`:** until the user confirms, the project
 does NOT exist. Don't pretend it does, don't \`send_to_project\` with the
 prefilled id, and don't claim success in your reply. If \`cancelled\`, tell

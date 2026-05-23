@@ -32,6 +32,7 @@ export function EditProjectDialog({ open, project, onClose, onUpdated }: EditPro
   const [path, setPath] = useState("");
   const [driver, setDriver] = useState<DriverId>("claude");
   const [description, setDescription] = useState("");
+  const [tagsInput, setTagsInput] = useState("");
   const [regenerating, setRegenerating] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -45,6 +46,7 @@ export function EditProjectDialog({ open, project, onClose, onUpdated }: EditPro
       setPath(project.path);
       setDriver(project.defaultDriver);
       setDescription(project.description ?? "");
+      setTagsInput(project.tags.join(", "));
       setError(null);
       firstFieldRef.current?.focus();
     }
@@ -98,6 +100,10 @@ export function EditProjectDialog({ open, project, onClose, onUpdated }: EditPro
       const trimmedPath = path.trim();
       const trimmedDescription = description.trim();
       const currentDescription = project.description ?? "";
+      const parsedTags = tagsInput
+        .split(",")
+        .map((t) => t.trim())
+        .filter((t) => t.length > 0);
       const patch: Record<string, unknown> = {};
       if (trimmedName !== project.name) patch.name = trimmedName;
       if (trimmedPath !== project.path) patch.path = trimmedPath;
@@ -106,6 +112,13 @@ export function EditProjectDialog({ open, project, onClose, onUpdated }: EditPro
         // Empty string = clear back to null, anything else is a manual override.
         patch.description = trimmedDescription.length > 0 ? trimmedDescription : null;
       }
+      // Compare against the canonical row, not against the input string —
+      // whitespace and ordering differences in the textbox shouldn't fire a
+      // no-op PATCH.
+      const tagsChanged =
+        parsedTags.length !== project.tags.length ||
+        parsedTags.some((t, i) => t !== project.tags[i]);
+      if (tagsChanged) patch.tags = parsedTags;
       if (Object.keys(patch).length === 0) {
         onClose();
         return;
@@ -268,6 +281,23 @@ export function EditProjectDialog({ open, project, onClose, onUpdated }: EditPro
               }
               disabled={regenerating}
               className="resize-none rounded-md border border-zinc-800 bg-zinc-900/60 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-zinc-600 focus:outline-none disabled:opacity-60"
+            />
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="edit-project-tags" className="text-sm font-medium text-zinc-300">
+              Tags
+              <span className="ml-2 text-[11px] font-normal text-zinc-500">
+                comma-separated; used by the Manager for routing
+              </span>
+            </label>
+            <input
+              id="edit-project-tags"
+              type="text"
+              value={tagsInput}
+              onChange={(e) => setTagsInput(e.target.value)}
+              placeholder="e.g. infra, prod, backend"
+              className="rounded-md border border-zinc-800 bg-zinc-900/60 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-zinc-600 focus:outline-none"
             />
           </div>
 
