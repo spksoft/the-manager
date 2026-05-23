@@ -384,7 +384,7 @@ const TOOLS = [
   {
     name: "find_projects",
     description:
-      "Filter `list_projects` server-side. All filters are AND-ed; omitting a filter means \"any\". `tags` matches a project that has every listed tag (case-insensitive). `namePattern` / `pathPattern` are substring matches against the project's name / path (case-insensitive, not regex). Returns the same shape as `list_projects` (id, name, path, defaultDriver, ephemeral, expiresAt, description, tags) for matched rows. Cheaper than pulling everything from `list_projects` and re-filtering when the user gives a routing hint like \"the frontend project\".",
+      'Filter `list_projects` server-side. All filters are AND-ed; omitting a filter means "any". `tags` matches a project that has every listed tag (case-insensitive). `namePattern` / `pathPattern` are substring matches against the project\'s name / path (case-insensitive, not regex). Returns the same shape as `list_projects` (id, name, path, defaultDriver, ephemeral, expiresAt, description, tags) for matched rows. Cheaper than pulling everything from `list_projects` and re-filtering when the user gives a routing hint like "the frontend project".',
     inputSchema: {
       type: "object",
       properties: {
