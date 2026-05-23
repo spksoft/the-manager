@@ -5,6 +5,7 @@ import type { AgentHandle } from "@the-manager/drivers";
 import { ClaudeDriver } from "@the-manager/drivers";
 import { paths } from "@the-manager/persistence";
 import type { ProjectId } from "@the-manager/shared";
+import { writeManagerCommands } from "./manager-commands";
 import { emitNotification } from "./notifications";
 import {
   appendChunk,
@@ -157,6 +158,11 @@ async function ensureManagerWorkspace(cwd: string): Promise<void> {
 
   // 2. CLAUDE.md — system-managed brief, always rewritten so users get updates.
   await writeFile(join(cwd, "CLAUDE.md"), MANAGER_CLAUDE_MD, "utf8");
+
+  // 2b. Playbook slash commands under .claude/commands/ — also system-managed
+  // (rewritten each spawn). Only our named files are touched, so user-added
+  // commands in the same directory survive.
+  await writeManagerCommands(cwd);
 
   // 3. USER_INSTRUCTION.md / SOUL.md — user-owned. Create empty if missing;
   // never overwrite.
@@ -477,6 +483,25 @@ Anything that touches code, files, or knowledge inside a project → delegate.
   \`read_project_terminal\` before sending a follow-up.
 - **The terminal is visible to the user.** Whatever you \`send_to_project\`
   is displayed in their UI; don't echo secrets.
+
+## Your own playbooks
+
+You have your own slash commands (in \`.claude/commands/\` in this cwd) that
+package the multi-step workflows above so you don't have to reconstruct them
+each time. They're system-managed; treat them as your standard operating
+procedures:
+
+- **\`/status\`** — dashboard of every project (sessions + git state).
+- **\`/standup\`** — recent commits + dirty/ahead state across all projects.
+- **\`/dispatch <project hint> — <task>\`** — resolve the target project,
+  load its memory, refine the task, delegate, and report back.
+- **\`/onboard <project hint>\`** — read-only orientation on a project, then
+  warm its memory with anything new you learned.
+- **\`/remember [project hint] <note>\`** — save a durable note to global or
+  per-project memory.
+
+When a user request matches one of these, run the command rather than
+improvising the steps. The user can also invoke them directly.
 
 ## Your own workspace
 
