@@ -82,7 +82,7 @@ export function Sidebar({
       className={
         variant === "drawer"
           ? "flex h-full w-full flex-col bg-zinc-950"
-          : "hidden h-screen w-60 flex-shrink-0 flex-col border-r border-zinc-800 bg-zinc-950/40 md:flex"
+          : "hidden h-full w-60 flex-shrink-0 flex-col border-r border-zinc-800 bg-zinc-950/40 md:flex"
       }
     >
       <div className="flex h-12 items-center gap-2 border-b border-zinc-800 px-4">
