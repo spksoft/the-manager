@@ -20,7 +20,7 @@
 
 It runs as a Next.js web app, an Electron desktop app, and a self-hosted server — from one codebase.
 
-## Highlights
+## Highlights 
 
 - **Per-project agent sessions.** Long-lived pty under `claude` (no `-p`), full interactive REPL streamed to the browser via xterm.js.
 - **A Manager agent.** A separate, privileged `claude` session in its own working directory, ready to dispatch tasks across your projects.
